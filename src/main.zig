@@ -210,6 +210,7 @@ fn initUI(window_state: *WindowState) !void {
     const btn_size = 0.15;
     var position_x: f32 = -1.0 + btn_size / 2.0;
     const position_y: f32 = 1.0 - btn_size / 2.0;
+
     try window_state.ui_elements.append(window_state.allocator, .{
         .button = .{
             .position = .{ position_x, position_y },
@@ -324,14 +325,17 @@ fn addModeSpecificGeometry(allocator: std.mem.Allocator, window_state: *WindowSt
 }
 
 fn addUI(allocator: std.mem.Allocator, window_state: *WindowState, geometry_instances: *std.ArrayList(rd.GeometryInstance)) !void {
-    // try geometry_instances.append(allocator, .{
-    //     .geometry_type = rd.GeometryType.Rectangle,
-    //     .rotation = 0.0,
-    //     .translation = [2]f32{ 0.0, 0.0 },
-    //     .scale = [2]f32{ 2.0, 2.0 },
-    //     .texture_index = 0,
-    //     .render_hints = .{ .ui_element = true },
-    // });
+    if (false) {
+        // NOTE this renders a rectangle covering the whole area that the UI can use
+        try geometry_instances.append(allocator, .{
+            .geometry_type = rd.GeometryType.Rectangle,
+            .rotation = 0.0,
+            .translation = [2]f32{ 0.0, 0.0 },
+            .scale = [2]f32{ 2.0, 2.0 },
+            .texture_index = 0,
+            .render_hints = .{ .ui_element = true },
+        });
+    }
     for (window_state.ui_elements.items) |ui_element| {
         switch (ui_element) {
             .button => |btn| {
