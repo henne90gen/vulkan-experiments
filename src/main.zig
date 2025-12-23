@@ -77,6 +77,21 @@ pub fn main() !void {
         sync_objects_list[i] = sync_objects;
     }
 
+    const vertices = [_]f32{
+        0.0, -0.5, 1.0, 0.0, 0.0, // v0
+        0.5, 0.5, 0.0, 1.0, 0.0, // v1
+        -0.5, 0.5, 0.0, 0.0, 1.0, // v2
+    };
+
+    const buffer_size = @sizeOf(@TypeOf(vertices[0])) * vertices.len;
+    const vertex_buffer = try vk.createBuffer(&device, buffer_size);
+    defer vk.destroyBuffer(&device, vertex_buffer);
+
+    const vertex_buffer_memory = try vk.createBufferMemory(physical_device, &device, vertex_buffer);
+    defer vk.destroyBufferMemory(&device, vertex_buffer_memory);
+
+    try vk.mapMemory(&device, vertex_buffer_memory, &vertices);
+
     var current_frame: u32 = 0;
     while (!glfw.windowShouldClose(window)) {
         glfw.pollEvents();
@@ -90,6 +105,8 @@ pub fn main() !void {
             framebuffers,
             command_buffer,
             sync_objects,
+            vertex_buffer,
+            vertices.len / 5,
         );
         if (should_recreate_swap_chain) {
             const result = try vk.recreateSwapChain(
@@ -143,6 +160,8 @@ fn drawFrame(
     framebuffers: []vk.c.VkFramebuffer,
     command_buffer: vk.c.VkCommandBuffer,
     sync_objects: *const vk.SyncObjects,
+    vertex_buffer: vk.c.VkBuffer,
+    vertex_count: u32,
 ) !bool {
     const start = std.time.nanoTimestamp();
 
@@ -173,7 +192,7 @@ fn drawFrame(
         return error.ResettingCommandBufferFailed;
     }
 
-    try vk.recordCommandBuffer(swap_chain, pipeline, framebuffers, command_buffer, image_index);
+    try vk.recordCommandBuffer(swap_chain, pipeline, framebuffers, command_buffer, vertex_buffer, vertex_count, image_index);
 
     const wait_semaphores = [_]vk.c.VkSemaphore{sync_objects.image_available_semaphore};
     const wait_stages = [_]vk.c.VkPipelineStageFlags{vk.c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};

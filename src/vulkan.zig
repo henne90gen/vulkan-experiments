@@ -6,13 +6,13 @@ pub const c = @cImport({
     @cInclude("vulkan/vk_enum_string_helper.h");
 });
 
-const isDebugBuild = switch (builtin.mode) {
+const is_debug_build = switch (builtin.mode) {
     .ReleaseFast => false,
     .ReleaseSmall => false,
     else => true,
 };
 
-const required_extensions = [_][]const u8{
+const REQUIRED_EXTENSIONS = [_][]const u8{
     "VK_KHR_swapchain",
 };
 
@@ -84,7 +84,7 @@ pub const SyncObjects = struct {
     }
 };
 
-pub fn createInstance(gpa: std.mem.Allocator, requiredExtensions: [][*:0]const u8) !c.VkInstance {
+pub fn createInstance(gpa: std.mem.Allocator, required_extensions: [][*:0]const u8) !c.VkInstance {
     var app_info = c.VkApplicationInfo{};
     app_info.sType = c.VK_STRUCTURE_TYPE_APPLICATION_INFO;
     app_info.pApplicationName = "Hello Triangle";
@@ -98,13 +98,13 @@ pub fn createInstance(gpa: std.mem.Allocator, requiredExtensions: [][*:0]const u
     create_info.pApplicationInfo = &app_info;
     create_info.enabledLayerCount = 0;
 
-    var extensions = try std.ArrayList([*:0]const u8).initCapacity(gpa, requiredExtensions.len);
+    var extensions = try std.ArrayList([*:0]const u8).initCapacity(gpa, required_extensions.len);
     defer extensions.deinit(gpa);
-    for (requiredExtensions) |extension_name| {
+    for (required_extensions) |extension_name| {
         try extensions.append(gpa, extension_name);
     }
 
-    if (isDebugBuild) {
+    if (is_debug_build) {
         try extensions.append(gpa, c.VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
         std.debug.print("Enabling required extensions:\n", .{});
         for (extensions.items) |extension_name| {
@@ -115,7 +115,7 @@ pub fn createInstance(gpa: std.mem.Allocator, requiredExtensions: [][*:0]const u
     create_info.ppEnabledExtensionNames = @ptrCast(extensions.items);
 
     var debug_create_info = defaultDebugUtilsMessengerCreateInfo();
-    if (isDebugBuild) {
+    if (is_debug_build) {
         create_info.pNext = &debug_create_info;
 
         const validation_layer_name = "VK_LAYER_KHRONOS_validation";
@@ -153,7 +153,7 @@ fn checkValidationLayerSupport(gpa: std.mem.Allocator, layer_name: [:0]const u8)
         return error.VulkanLayerEnumerationFailed;
     }
 
-    for (available_layers[0..layer_count]) |layer_prop| {
+    for (available_layers) |layer_prop| {
         if (std.mem.eql(u8, layer_name, layer_prop.layerName[0..layer_name.len])) {
             return true;
         }
@@ -173,24 +173,24 @@ fn defaultDebugUtilsMessengerCreateInfo() c.VkDebugUtilsMessengerCreateInfoEXT {
 }
 
 pub fn setupDebugMessenger(instance: c.VkInstance) !c.VkDebugUtilsMessengerEXT {
-    if (!isDebugBuild) {
+    if (!is_debug_build) {
         return null;
     }
 
     var create_info = defaultDebugUtilsMessengerCreateInfo();
-    var debugMessenger: c.VkDebugUtilsMessengerEXT = null;
+    var debug_messenger: c.VkDebugUtilsMessengerEXT = null;
     const func_opt: c.PFN_vkCreateDebugUtilsMessengerEXT = @ptrCast(c.vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT"));
     const func = func_opt orelse return error.VulkanExtensionFunctionNotFound;
-    const result = func(instance, &create_info, null, &debugMessenger);
+    const result = func(instance, &create_info, null, &debug_messenger);
     if (result != c.VK_SUCCESS) {
         return error.VulkanDebugMessengerCreationFailed;
     }
 
-    return debugMessenger;
+    return debug_messenger;
 }
 
 pub fn destroyDebugMessenger(instance: c.VkInstance, debugMessenger: c.VkDebugUtilsMessengerEXT) void {
-    if (!isDebugBuild) {
+    if (!is_debug_build) {
         return;
     }
 
@@ -269,7 +269,7 @@ fn checkDeviceExtensionSupport(gpa: std.mem.Allocator, device: c.VkPhysicalDevic
     }
 
     var found_all_extensions = true;
-    for (required_extensions) |extension_name| {
+    for (REQUIRED_EXTENSIONS) |extension_name| {
         var found_extesion = false;
         for (available_extensions) |extension| {
             if (std.mem.eql(u8, extension_name, extension.extensionName[0..extension_name.len])) {
@@ -356,8 +356,8 @@ pub fn createLogicalDevice(gpa: std.mem.Allocator, physical_device: c.VkPhysical
         .queueCreateInfoCount = @intCast(queue_create_infos.items.len),
         .pQueueCreateInfos = @ptrCast(queue_create_infos.items),
         .pEnabledFeatures = &device_features,
-        .enabledExtensionCount = required_extensions.len,
-        .ppEnabledExtensionNames = @ptrCast(&required_extensions[0]),
+        .enabledExtensionCount = REQUIRED_EXTENSIONS.len,
+        .ppEnabledExtensionNames = @ptrCast(&REQUIRED_EXTENSIONS[0]),
         .enabledLayerCount = 0,
     };
 
@@ -463,15 +463,15 @@ fn chooseSwapExtent(capabilities: c.VkSurfaceCapabilitiesKHR) c.VkExtent2D {
     // int width, height;
     //     glfwGetFramebufferSize(window, &width, &height);
 
-    var actualExtent = c.VkExtent2D{
+    var actual_extent = c.VkExtent2D{
         .width = 800,
         .height = 600,
     };
 
-    actualExtent.width = std.math.clamp(actualExtent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
-    actualExtent.height = std.math.clamp(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
+    actual_extent.width = std.math.clamp(actual_extent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
+    actual_extent.height = std.math.clamp(actual_extent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
 
-    return actualExtent;
+    return actual_extent;
 }
 
 pub fn createSwapChain(gpa: std.mem.Allocator, physical_device: c.VkPhysicalDevice, device: *const Device, surface: c.VkSurfaceKHR) !SwapChain {
@@ -547,7 +547,7 @@ fn getSwapChainImages(gpa: std.mem.Allocator, device: *const Device, swap_chain:
         return error.VulkanSwapChainImageRetrievalFailed;
     }
 
-    return images[0..image_count];
+    return images;
 }
 
 pub fn createImageViews(gpa: std.mem.Allocator, device: *const Device, swap_chain: *const SwapChain) ![]c.VkImageView {
@@ -631,12 +631,33 @@ pub fn createGraphicsPipeline(gpa: std.mem.Allocator, device: *const Device, swa
         .pDynamicStates = &dynamic_states[0],
     };
 
+    const binding_description = c.VkVertexInputBindingDescription{
+        .binding = 0,
+        .stride = @sizeOf(f32) * 5,
+        .inputRate = c.VK_VERTEX_INPUT_RATE_VERTEX,
+    };
+
+    const attribute_descriptions = [_]c.VkVertexInputAttributeDescription{
+        .{
+            .binding = 0,
+            .location = 0,
+            .format = c.VK_FORMAT_R32G32_SFLOAT,
+            .offset = 0,
+        },
+        .{
+            .binding = 0,
+            .location = 1,
+            .format = c.VK_FORMAT_R32G32B32_SFLOAT,
+            .offset = @sizeOf(f32) * 2,
+        },
+    };
+
     const vertex_input_info = c.VkPipelineVertexInputStateCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-        .vertexBindingDescriptionCount = 0,
-        .pVertexBindingDescriptions = null,
-        .vertexAttributeDescriptionCount = 0,
-        .pVertexAttributeDescriptions = null,
+        .vertexBindingDescriptionCount = 1,
+        .vertexAttributeDescriptionCount = attribute_descriptions.len,
+        .pVertexBindingDescriptions = &binding_description,
+        .pVertexAttributeDescriptions = &attribute_descriptions[0],
     };
 
     const input_assembly = c.VkPipelineInputAssemblyStateCreateInfo{
@@ -913,6 +934,8 @@ pub fn recordCommandBuffer(
     graphics_pipeline: *const Pipeline,
     framebuffers: []c.VkFramebuffer,
     command_buffer: c.VkCommandBuffer,
+    vertex_buffer: c.VkBuffer,
+    vertex_count: u32,
     image_index: u32,
 ) !void {
     const begin_info = c.VkCommandBufferBeginInfo{
@@ -944,6 +967,10 @@ pub fn recordCommandBuffer(
 
     c.vkCmdBindPipeline(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline.pipeline);
 
+    const vertex_buffers = [_]c.VkBuffer{vertex_buffer};
+    const offsets = [_]c.VkDeviceSize{0};
+    c.vkCmdBindVertexBuffers(command_buffer, 0, 1, &vertex_buffers, &offsets);
+
     const viewport = c.VkViewport{
         .x = 0.0,
         .y = 0.0,
@@ -960,7 +987,7 @@ pub fn recordCommandBuffer(
     };
     c.vkCmdSetScissor(command_buffer, 0, 1, &scissor);
 
-    c.vkCmdDraw(command_buffer, 3, 1, 0, 0);
+    c.vkCmdDraw(command_buffer, vertex_count, 1, 0, 0);
 
     c.vkCmdEndRenderPass(command_buffer);
 
@@ -1020,7 +1047,7 @@ pub fn recreateSwapChain(
     const err = c.vkDeviceWaitIdle(device.device);
     if (err != c.VK_SUCCESS) {
         std.debug.print("Failed to wait for device to become idle: {s}\n", .{c.string_VkResult(err)});
-        return error.WaitingForDeviceIdleFailed;
+        return error.DeviceWaitIdleFailed;
     }
 
     destroyFramebuffers(gpa, device, framebuffers);
@@ -1036,4 +1063,85 @@ pub fn recreateSwapChain(
         .image_views = new_image_views,
         .framebuffers = new_framebuffers,
     };
+}
+
+pub fn createBuffer(device: *const Device, buffer_size: usize) !c.VkBuffer {
+    const buffer_info = c.VkBufferCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = buffer_size,
+        .usage = c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        .sharingMode = c.VK_SHARING_MODE_EXCLUSIVE,
+    };
+
+    var buffer: c.VkBuffer = undefined;
+    const err = c.vkCreateBuffer(device.device, &buffer_info, null, &buffer);
+    if (err != c.VK_SUCCESS) {
+        std.debug.print("Failed to create buffer: {s}\n", .{c.string_VkResult(err)});
+        return error.VertexBufferCreationFailed;
+    }
+
+    return buffer;
+}
+
+pub fn destroyBuffer(device: *const Device, buffer: c.VkBuffer) void {
+    c.vkDestroyBuffer(device.device, buffer, null);
+}
+
+fn findMemoryType(physical_device: c.VkPhysicalDevice, type_filter: u32, properties: c.VkMemoryPropertyFlags) !u32 {
+    var memory_properties: c.VkPhysicalDeviceMemoryProperties = undefined;
+    c.vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
+
+    for (0..memory_properties.memoryTypeCount) |i| {
+        if (type_filter & (@as(u32, @intCast(1)) << @intCast(i)) != 0 and (memory_properties.memoryTypes[i].propertyFlags & properties) == properties) {
+            return @intCast(i);
+        }
+    }
+
+    return error.FindingMemoryTypeFailed;
+}
+
+pub fn createBufferMemory(physical_device: c.VkPhysicalDevice, device: *const Device, buffer: c.VkBuffer) !c.VkDeviceMemory {
+    var memory_requirements: c.VkMemoryRequirements = undefined;
+    c.vkGetBufferMemoryRequirements(device.device, buffer, &memory_requirements);
+
+    const memory_type_index = try findMemoryType(physical_device, memory_requirements.memoryTypeBits, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    const alloc_info = c.VkMemoryAllocateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = memory_requirements.size,
+        .memoryTypeIndex = memory_type_index,
+    };
+
+    var buffer_memory: c.VkDeviceMemory = undefined;
+    var err = c.vkAllocateMemory(device.device, &alloc_info, null, &buffer_memory);
+    if (err != c.VK_SUCCESS) {
+        std.debug.print("Failed to create buffer memory: {s}\n", .{c.string_VkResult(err)});
+        return error.BufferMemoryCreationFailed;
+    }
+
+    err = c.vkBindBufferMemory(device.device, buffer, buffer_memory, 0);
+    if (err != c.VK_SUCCESS) {
+        std.debug.print("Failed to bind buffer memory: {s}\n", .{c.string_VkResult(err)});
+        return error.BufferMemoryBindingFailed;
+    }
+
+    return buffer_memory;
+}
+
+pub fn destroyBufferMemory(device: *const Device, memory: c.VkDeviceMemory) void {
+    c.vkFreeMemory(device.device, memory, null);
+}
+
+pub fn mapMemory(device: *const Device, buffer_memory: c.VkDeviceMemory, data_in: []const f32) !void {
+    const buffer_size = @sizeOf(@TypeOf(data_in[0])) * data_in.len;
+    var data: [*]f32 = undefined;
+    const err = c.vkMapMemory(device.device, buffer_memory, 0, buffer_size, 0, @ptrCast(&data));
+    if (err != c.VK_SUCCESS) {
+        std.debug.print("Failed to map memory: {s}\n", .{c.string_VkResult(err)});
+        return error.MapMemoryFailed;
+    }
+
+    const data_slice: []f32 = data[0..data_in.len];
+    std.mem.copyForwards(f32, data_slice, data_in);
+
+    c.vkUnmapMemory(device.device, buffer_memory);
 }
