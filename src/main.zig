@@ -6,6 +6,7 @@ const vk = @import("vulkan.zig");
 const bmp = @import("bitmap.zig");
 const utils = @import("utils.zig");
 const rd = @import("renderer.zig");
+const math = @import("math.zig");
 
 test {
     std.testing.refAllDeclsRecursive(@This());
@@ -17,6 +18,7 @@ const WindowState = struct {
     center: [2]f32 = .{ 0.0, 0.0 },
 
     primitives: std.ArrayList(Primitive),
+    ui_elements: std.ArrayList(UiElement),
 
     mode: union(enum) {
         navigation: NavigationData,
@@ -26,6 +28,7 @@ const WindowState = struct {
 
     pub fn deinit(self: *WindowState) void {
         self.primitives.deinit(self.allocator);
+        self.ui_elements.deinit(self.allocator);
     }
 };
 
@@ -50,6 +53,22 @@ const Primitive = union(enum) {
     },
 };
 
+const UiElement = union(enum) {
+    button: struct {
+        position: [2]f32,
+        size: [2]f32,
+        image: ButtonImage,
+        render_hints: rd.RenderHints = .{ .ui_element = true },
+        on_click: *const fn (window: *glfw.c.GLFWwindow, window_state: *WindowState) void,
+    },
+};
+
+const ButtonImage = enum(i32) {
+    Line = 0,
+    Arc = 1,
+    Circle = 2,
+};
+
 pub fn main() !void {
     var debug_allocator = std.heap.DebugAllocator(.{}){};
     defer {
@@ -71,8 +90,11 @@ pub fn main() !void {
         .allocator = allocator,
         .zoom = 0.1,
         .primitives = std.ArrayList(Primitive).empty,
+        .ui_elements = std.ArrayList(UiElement).empty,
     };
     defer window_state.deinit();
+
+    try initUI(&window_state);
 
     try window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = [2]f32{ 2.0, 2.0 } } });
     try window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = [2]f32{ 2.0, -2.0 } } });
@@ -166,6 +188,58 @@ pub fn main() !void {
     }
 }
 
+fn createLineClicked(window: *glfw.c.GLFWwindow, window_state: *WindowState) void {
+    _ = window;
+    window_state.mode = .{ .creating_line = .{} };
+    std.debug.print("Switched to creating_line mode\n", .{});
+}
+
+fn createArcClicked(window: *glfw.c.GLFWwindow, window_state: *WindowState) void {
+    _ = window;
+    window_state.mode = .{ .creating_line = .{} };
+    std.debug.print("Switched to creating_arc mode\n", .{});
+}
+
+fn createCircleClicked(window: *glfw.c.GLFWwindow, window_state: *WindowState) void {
+    _ = window;
+    window_state.mode = .{ .creating_line = .{} };
+    std.debug.print("Switched to creating_circle mode\n", .{});
+}
+
+fn initUI(window_state: *WindowState) !void {
+    const btn_size = 0.15;
+    var position_x: f32 = -1.0 + btn_size / 2.0;
+    const position_y: f32 = 1.0 - btn_size / 2.0;
+    try window_state.ui_elements.append(window_state.allocator, .{
+        .button = .{
+            .position = .{ position_x, position_y },
+            .size = .{ btn_size, btn_size },
+            .image = .Line,
+            .on_click = &createLineClicked,
+        },
+    });
+
+    position_x += btn_size;
+    try window_state.ui_elements.append(window_state.allocator, .{
+        .button = .{
+            .position = .{ position_x, position_y },
+            .size = .{ btn_size, btn_size },
+            .image = .Arc,
+            .on_click = &createArcClicked,
+        },
+    });
+
+    position_x += btn_size;
+    try window_state.ui_elements.append(window_state.allocator, .{
+        .button = .{
+            .position = .{ position_x, position_y },
+            .size = .{ btn_size, btn_size },
+            .image = .Circle,
+            .on_click = &createCircleClicked,
+        },
+    });
+}
+
 fn addPrimitives(allocator: std.mem.Allocator, window_state: *WindowState, geometry_instances: *std.ArrayList(rd.GeometryInstance)) !void {
     for (window_state.primitives.items) |primitive| {
         switch (primitive) {
@@ -208,7 +282,7 @@ fn addModeSpecificGeometry(allocator: std.mem.Allocator, window_state: *WindowSt
         .creating_line => |*line_data| {
             if (line_data.start) |start| {
                 const mousePosition = glfw.getMousePosition(window);
-                const end = mapMousePositionToObjectSpace(window, window_state, mousePosition);
+                const end = math.mapMousePositionToObjectSpace(window, window_state.zoom, mousePosition, window_state.center);
                 const sx = start[0];
                 const sy = start[1];
                 const ex = end[0];
@@ -250,23 +324,28 @@ fn addModeSpecificGeometry(allocator: std.mem.Allocator, window_state: *WindowSt
 }
 
 fn addUI(allocator: std.mem.Allocator, window_state: *WindowState, geometry_instances: *std.ArrayList(rd.GeometryInstance)) !void {
-    _ = window_state;
-    try geometry_instances.append(allocator, .{
-        .geometry_type = rd.GeometryType.Rectangle,
-        .rotation = 0.0,
-        .translation = [2]f32{ 0.0, 0.0 },
-        .scale = [2]f32{ 2.0, 2.0 },
-        .texture_index = 0,
-        .render_hints = .{ .ui_element = true },
-    });
-    try geometry_instances.append(allocator, .{
-        .geometry_type = rd.GeometryType.TexturedQuad,
-        .rotation = 0.0,
-        .translation = [2]f32{ -0.9, 0.5 },
-        .scale = [2]f32{ 0.5, 0.5 },
-        .texture_index = 1,
-        .render_hints = .{ .ui_element = true },
-    });
+    // try geometry_instances.append(allocator, .{
+    //     .geometry_type = rd.GeometryType.Rectangle,
+    //     .rotation = 0.0,
+    //     .translation = [2]f32{ 0.0, 0.0 },
+    //     .scale = [2]f32{ 2.0, 2.0 },
+    //     .texture_index = 0,
+    //     .render_hints = .{ .ui_element = true },
+    // });
+    for (window_state.ui_elements.items) |ui_element| {
+        switch (ui_element) {
+            .button => |btn| {
+                try geometry_instances.append(allocator, .{
+                    .geometry_type = rd.GeometryType.TexturedQuad,
+                    .rotation = 0.0,
+                    .translation = btn.position,
+                    .scale = btn.size,
+                    .texture_index = @intFromEnum(btn.image),
+                    .render_hints = btn.render_hints,
+                });
+            },
+        }
+    }
 }
 
 export fn keyCallback(window: ?*glfw.c.GLFWwindow, key: i32, scancode: i32, action: i32, mods: i32) void {
@@ -318,32 +397,60 @@ export fn mouseButtonCallback(window: ?*glfw.c.GLFWwindow, button: i32, action: 
         return;
     }
 
+    const uiWasClicked = handleClickInUI(window.?, button, action, window_state.?);
+    if (uiWasClicked) {
+        return;
+    }
+
     switch (window_state.?.mode) {
         .navigation => |*navigation_data| {
             handleNavigation(window.?, button, action, window_state.?, navigation_data);
         },
         .creating_point => {
-            createPoint(window.?, button, action, window_state.?);
+            createPoint(window.?, button, action, window_state.?) catch {
+                std.debug.print("Failed to create point\n", .{});
+            };
         },
         .creating_line => |*line_data| {
-            createLine(window.?, button, action, window_state.?, line_data);
+            createLine(window.?, button, action, window_state.?, line_data) catch {
+                std.debug.print("Failed to create line\n", .{});
+            };
         },
     }
+}
+
+fn handleClickInUI(window: *glfw.c.GLFWwindow, button: i32, action: i32, window_state: *WindowState) bool {
+    if (button != glfw.c.GLFW_MOUSE_BUTTON_1 or action != glfw.c.GLFW_PRESS) {
+        return false;
+    }
+
+    const mousePosition = glfw.getMousePosition(window);
+    const mouse_position = math.mapMousePositionToScreenSpace(window, 1.0, mousePosition);
+    for (window_state.ui_elements.items) |ui_elemnt| {
+        switch (ui_elemnt) {
+            .button => |btn| {
+                if (math.rectContainsPoint(btn.position, btn.size, mouse_position)) {
+                    btn.on_click(window, window_state);
+                    return true;
+                }
+            },
+        }
+    }
+
+    return false;
 }
 
 fn handleNavigation(window: *glfw.c.GLFWwindow, button: i32, action: i32, window_state: *WindowState, navigation_data: *NavigationData) void {
     navigation_data.left_mouse_button_down = (button == glfw.c.GLFW_MOUSE_BUTTON_LEFT and action == glfw.c.GLFW_PRESS);
     navigation_data.last_cursor_position = null;
-    std.debug.print("Mouse button state: {}\n", .{navigation_data.left_mouse_button_down});
 
     if (!navigation_data.left_mouse_button_down) {
         return;
     }
 
     const mousePosition = glfw.getMousePosition(window);
-    const scaled = mapMousePositionToObjectSpace(window, window_state, mousePosition);
-    std.debug.print("Searching for points around: ({}, {})\n", .{ scaled[0], scaled[1] });
-    const v0 = zm.f32x4(scaled[0], scaled[1], 0.0, 0.0);
+    const mouse_position = math.mapMousePositionToObjectSpace(window, window_state.zoom, mousePosition, window_state.center);
+    const v0 = zm.f32x4(mouse_position[0], mouse_position[1], 0.0, 0.0);
     for (window_state.primitives.items) |*primitive| {
         switch (primitive.*) {
             .point => |*point| {
@@ -352,7 +459,6 @@ fn handleNavigation(window: *glfw.c.GLFWwindow, button: i32, action: i32, window
                 const distance = zm.length2(diff)[0];
                 if (distance < 0.5) {
                     point.render_hints.selected = !point.render_hints.selected;
-                    std.debug.print("Primitive: {any} distance={}\n", .{ primitive, distance });
                 }
             },
             .line => continue,
@@ -360,69 +466,34 @@ fn handleNavigation(window: *glfw.c.GLFWwindow, button: i32, action: i32, window
     }
 }
 
-fn createPoint(window: *glfw.c.GLFWwindow, button: i32, action: i32, window_state: *WindowState) void {
+fn createPoint(window: *glfw.c.GLFWwindow, button: i32, action: i32, window_state: *WindowState) !void {
     if (button != glfw.c.GLFW_MOUSE_BUTTON_LEFT or action != glfw.c.GLFW_PRESS) {
         return;
     }
 
     const mousePosition = glfw.getMousePosition(window);
-    const scaled = mapMousePositionToObjectSpace(window, window_state, mousePosition);
-    window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = scaled } }) catch {
-        std.debug.print("Failed to append point\n", .{});
-    };
-    std.debug.print("Point added: ({}, {}) -> primitives count = {}\n", .{ scaled[0], scaled[1], window_state.primitives.items.len });
+    const mouse_position = math.mapMousePositionToObjectSpace(window, window_state.zoom, mousePosition, window_state.center);
+    try window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = mouse_position } });
+    std.debug.print("Point added: ({}, {}) -> primitives count = {}\n", .{ mouse_position[0], mouse_position[1], window_state.primitives.items.len });
 }
 
-fn createLine(window: *glfw.c.GLFWwindow, button: i32, action: i32, window_state: *WindowState, line_data: *LineCreationData) void {
+fn createLine(window: *glfw.c.GLFWwindow, button: i32, action: i32, window_state: *WindowState, line_data: *LineCreationData) !void {
     if (button != glfw.c.GLFW_MOUSE_BUTTON_LEFT or action != glfw.c.GLFW_PRESS) {
         return;
     }
 
     const mousePosition = glfw.getMousePosition(window);
-    const scaled = mapMousePositionToObjectSpace(window, window_state, mousePosition);
+    const mouse_position = math.mapMousePositionToObjectSpace(window, window_state.zoom, mousePosition, window_state.center);
 
     if (line_data.start) |start| {
-        window_state.primitives.append(window_state.allocator, .{ .line = .{
-            .start = start,
-            .end = scaled,
-        } }) catch {
-            std.debug.print("Failed to append line\n", .{});
-        };
-        window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = start } }) catch {
-            std.debug.print("Failed to append point\n", .{});
-        };
-        window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = scaled } }) catch {
-            std.debug.print("Failed to append point\n", .{});
-        };
-        std.debug.print("Line added: ({}, {}) - ({}, {}) -> primitives count = {}\n", .{ start[0], start[1], scaled[0], scaled[1], window_state.primitives.items.len });
+        try window_state.primitives.append(window_state.allocator, .{ .line = .{ .start = start, .end = mouse_position } });
+        try window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = start } });
+        try window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = mouse_position } });
+        std.debug.print("Line added: ({}, {}) - ({}, {}) -> primitives count = {}\n", .{ start[0], start[1], mouse_position[0], mouse_position[1], window_state.primitives.items.len });
         line_data.start = null;
     } else {
-        line_data.start = scaled;
+        line_data.start = mouse_position;
     }
-}
-
-fn mapMousePositionToObjectSpace(window: *glfw.c.GLFWwindow, window_state: *WindowState, mousePosition: glfw.MousePosition) [2]f32 {
-    const framebuffer_size = glfw.getFramebufferSize(window);
-    const framebuffer_size_vec = zm.f32x4(@floatFromInt(framebuffer_size.width), @floatFromInt(framebuffer_size.height), 0.0, 0.0);
-
-    var scaled = zm.f32x4(@floatCast(mousePosition.x), @floatCast(mousePosition.y), 0.0, 0.0);
-    scaled /= framebuffer_size_vec;
-    scaled *= zm.splat(zm.F32x4, 2.0);
-    scaled -= zm.splat(zm.F32x4, 1.0);
-    scaled *= zm.f32x4(1.0, -1.0, 0.0, 0.0);
-    scaled /= zm.splat(zm.F32x4, window_state.zoom);
-
-    const aspect_ratio = @as(f64, @floatFromInt(framebuffer_size.width)) / @as(f64, @floatFromInt(framebuffer_size.height));
-    if (aspect_ratio > 1.0) {
-        scaled[0] *= @floatCast(aspect_ratio);
-    } else {
-        scaled[1] /= @floatCast(aspect_ratio);
-    }
-
-    const center = zm.f32x4(window_state.center[0], window_state.center[1], 0.0, 0.0);
-    scaled -= center;
-
-    return [2]f32{ scaled[0], scaled[1] };
 }
 
 export fn scrollCallback(window: ?*glfw.c.GLFWwindow, xoffset: f64, yoffset: f64) void {
@@ -455,10 +526,7 @@ export fn cursorPosCallback(window: ?*glfw.c.GLFWwindow, xpos: f64, ypos: f64) v
     switch (window_state.?.mode) {
         .navigation => |*navigation_data| {
             if (navigation_data.left_mouse_button_down) {
-                var current_cursor_position = mapMousePositionToObjectSpace(window.?, window_state.?, .{ .x = xpos, .y = ypos });
-                current_cursor_position[0] += window_state.?.center[0];
-                current_cursor_position[1] += window_state.?.center[1];
-
+                const current_cursor_position = math.mapMousePositionToScreenSpace(window.?, window_state.?.zoom, .{ .x = xpos, .y = ypos });
                 if (navigation_data.last_cursor_position) |*last_cursor_position| {
                     const delta_x = current_cursor_position[0] - last_cursor_position[0];
                     const delta_y = current_cursor_position[1] - last_cursor_position[1];
