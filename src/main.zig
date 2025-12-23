@@ -22,6 +22,8 @@ pub fn main() !void {
     const window = try glfw.createWindow(800, 600, "Hello World");
     defer glfw.destroyWindow(window);
 
+    glfw.setKeyCallback(window, keyCallback);
+
     const requiredExtensions = glfw.getRequiredInstanceExtensions();
     const instance = try vk.createInstance(gpa, requiredExtensions);
     defer vk.destroyInstance(instance);
@@ -64,6 +66,7 @@ pub fn main() !void {
 
     while (!glfw.windowShouldClose(window)) {
         glfw.pollEvents();
+
         try drawFrame(&device, &sync_objects, &swap_chain, &pipeline, framebuffers, command_buffer);
     }
 
@@ -71,6 +74,17 @@ pub fn main() !void {
     if (err != vk.c.VK_SUCCESS) {
         std.debug.print("Failed to wait for device idle: {s}\n", .{vk.c.string_VkResult(err)});
         return;
+    }
+}
+
+export fn keyCallback(window: ?*glfw.c.GLFWwindow, key: i32, scancode: i32, action: i32, mods: i32) void {
+    _ = scancode;
+    _ = mods;
+    if (window == null) {
+        return;
+    }
+    if (key == glfw.c.GLFW_KEY_ESCAPE and action == glfw.c.GLFW_PRESS) {
+        glfw.setWindowShouldClose(window.?, true);
     }
 }
 

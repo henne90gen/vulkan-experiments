@@ -41,3 +41,11 @@ pub fn getRequiredInstanceExtensions() [][*:0]const u8 {
     const glfwExtensions = c.glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
     return @ptrCast(glfwExtensions[0..glfwExtensionCount]);
 }
+
+pub fn setKeyCallback(window: *c.GLFWwindow, keyCallback: fn (window: ?*c.GLFWwindow, key: i32, scancode: i32, action: i32, mods: i32) callconv(.c) void) void {
+    _ = c.glfwSetKeyCallback(window, keyCallback);
+}
+
+pub fn setWindowShouldClose(window: *c.GLFWwindow, shouldClose: bool) void {
+    c.glfwSetWindowShouldClose(window, @intFromBool(shouldClose));
+}
