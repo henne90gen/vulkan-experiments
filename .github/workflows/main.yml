@@ -1,0 +1,17 @@
+name: Build and Test
+
+on: [push]
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    name: Build and Test
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+      - run: zig build
+      - run: zig build test
