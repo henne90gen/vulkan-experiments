@@ -10,22 +10,38 @@ layout(location = 3) flat in float frag_radius;
 layout(location = 0) out vec4 out_color;
 
 void main() {
-    float distance_from_center = distance(frag_position, frag_center);
-    float t = distance_from_center / frag_radius;
-    
-    // Nice gradient from deep blue center to cyan edges
-    vec4 center_color = vec4(0.2, 0.3, 0.7, 1.0);  // Deep blue
-    vec4 edge_color = vec4(0.3, 0.6, 0.8, 1.0);    // Cyan
-    
-    // Smooth falloff for anti-aliased edges
-    float edge_start = 0.4;
-    float edge_end = 0.5;
-    float alpha = 1.0 - smoothstep(edge_start, edge_end, t);
-    
-    if (t > edge_end) {
-        discard;
+    if (frag_geometry_type == 0) { // circle
+        vec4 fill_color = vec4(0.25, 0.4, 0.75, 1.0); // Deep blue fill
+        vec4 border_color = vec4(0.15, 0.25, 0.55, 1.0); // Darker blue border
+
+        float distance_from_center = distance(frag_position, frag_center);
+        float t = distance_from_center / frag_radius;
+
+        // Circle parameters (in normalized space where radius = 0.5)
+        float outer_radius = 0.45;
+        float border_width = 0.04;
+        float inner_radius = outer_radius - border_width;
+        float aa_width = 0.01;
+
+        if (t > outer_radius + aa_width) {
+            discard;
+        }
+
+        // Outer edge anti-aliasing (fade to transparent)
+        float outer_aa = 1.0 - smoothstep(outer_radius - aa_width, outer_radius + aa_width, t);
+        // Border region (transition from fill to border)
+        float border_mix = smoothstep(inner_radius - aa_width, inner_radius + aa_width, t);
+        // Mix fill and border colors
+        vec4 color = mix(fill_color, border_color, border_mix);
+        // Apply outer edge anti-aliasing
+        out_color = vec4(color.rgb, color.a * outer_aa);
+    } else if (frag_geometry_type == 1) { // rectangle
+        // Solid green for rectangles
+        out_color = vec4(0.0, 1.0, 0.0, 1.0);
+    } else if (frag_geometry_type == 2) { // texture-mapped quad
+        out_color = texture(tex_sampler, frag_position);
     } else {
-        vec4 color = mix(center_color, edge_color, t * 2.0);
-        out_color = vec4(color.rgb, alpha);
+        // Magenta for unknown geometry types
+        out_color = vec4(1.0, 0.0, 1.0, 1.0);
     }
 }

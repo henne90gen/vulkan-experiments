@@ -395,6 +395,7 @@ pub const PerFrameVulkanData = struct {
 pub const UniformBufferObject = extern struct {
     aspect_ratio: f32 align(4),
     zoom: f32 align(4),
+    offset: [2]f32 align(8),
 };
 
 pub const Vertex = extern struct {

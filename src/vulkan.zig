@@ -765,7 +765,7 @@ pub fn createGraphicsPipeline(
     const depth_stencil_state = c.VkPipelineDepthStencilStateCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
         .depthTestEnable = c.VK_TRUE,
-        .depthWriteEnable = c.VK_TRUE,
+        .depthWriteEnable = c.VK_FALSE,
         .depthCompareOp = c.VK_COMPARE_OP_LESS,
         .depthBoundsTestEnable = c.VK_FALSE,
         .minDepthBounds = 0.0,
@@ -1161,6 +1161,10 @@ pub fn destroyBufferMemory(device: *const Device, memory: c.VkDeviceMemory) void
 
 pub fn mapMemory(device: *const Device, buffer_memory: c.VkDeviceMemory, data_in: []const f32) !void {
     const buffer_size = @sizeOf(@TypeOf(data_in[0])) * data_in.len;
+    if (buffer_size == 0) {
+        return;
+    }
+
     var data: [*]f32 = undefined;
     const err = c.vkMapMemory(device.device, buffer_memory, 0, buffer_size, 0, @ptrCast(&data));
     if (err != c.VK_SUCCESS) {

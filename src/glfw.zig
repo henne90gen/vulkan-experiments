@@ -52,6 +52,10 @@ pub fn setScrollCallback(window: *c.GLFWwindow, scrollCallback: c.GLFWscrollfun)
     _ = c.glfwSetScrollCallback(window, scrollCallback);
 }
 
+pub fn setCursorPosCallback(window: *c.GLFWwindow, scrollCallback: c.GLFWcursorposfun) void {
+    _ = c.glfwSetCursorPosCallback(window, scrollCallback);
+}
+
 pub fn setWindowShouldClose(window: *c.GLFWwindow, shouldClose: bool) void {
     c.glfwSetWindowShouldClose(window, @intFromBool(shouldClose));
 }
