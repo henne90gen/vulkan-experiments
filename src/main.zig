@@ -82,7 +82,8 @@ pub fn main() !void {
         sync_objects_list[i] = sync_objects;
     }
 
-    _ = try models.Model.from_memory(gpa, suzanne);
+    const model = try models.Model.from_memory(gpa, suzanne);
+    defer model.deinit(gpa);
 
     const vertices = [_]f32{
         0.0, -0.5, 1.0, 0.0, 0.0, // v0
@@ -251,6 +252,6 @@ fn drawFrame(
     return false;
 }
 
-test "loads simple triangle model" {
+test "all" {
     std.testing.refAllDecls(@This());
 }
