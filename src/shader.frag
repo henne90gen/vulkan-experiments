@@ -54,10 +54,15 @@ void main() {
         texture_coords = texture_coords / float(texture_atlas_size) + offset;
         vec4 texture_color = texture(tex_sampler, texture_coords);
 
-        // Tint selected textures with orange overlay
         if (is_selected) {
-            vec4 selection_tint = vec4(1.0, 0.7, 0.3, 0.4);
-            out_color = mix(texture_color, selection_tint, selection_tint.a);
+            // Add border for selected textures
+            vec2 edge_dist = abs(frag_position);
+            float dist_from_edge = 0.5 - max(edge_dist.x, edge_dist.y);
+            float border_width = 0.04;
+            float aa_width = 0.01;
+            vec4 border_color = vec4(1.0, 0.7, 0.3, 1.0);
+            float border_factor = smoothstep(border_width - aa_width, border_width + aa_width, dist_from_edge);
+            out_color = mix(border_color, texture_color, border_factor);
         } else {
             out_color = texture_color;
         }
