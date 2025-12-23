@@ -28,23 +28,34 @@ fn createGLFW(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
     return glfw;
 }
 
-fn createVulkan(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *std.Build.Module {
+fn createVulkan(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) !*std.Build.Module {
     const vulkan = b.addModule("vulkan", .{
         .root_source_file = b.path("src/vulkan.zig"),
         .target = target,
         .optimize = optimize,
     });
 
+    if (builtin.os.tag == .windows) {
+        const vulkan_sdk_path = b.option([]const u8, "vulkan-sdk-path", "Path to Vulkan SDK");
+        if (vulkan_sdk_path == null) {
+            std.debug.print("Missing required option -Dvulkan-sdk-path", .{});
+            return error.MissingVulkanSDKPath;
+        }
+        vulkan.addIncludePath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/Include", .{vulkan_sdk_path.?}) });
+    }
+
     vulkan.linkSystemLibrary("vulkan", .{});
 
     return vulkan;
 }
 
-pub fn build(b: *std.Build) void {
+const builtin = @import("builtin");
+
+pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const glfw = createGLFW(b, target, optimize);
-    const vulkan = createVulkan(b, target, optimize);
+    const vulkan = try createVulkan(b, target, optimize);
     const exe = b.addExecutable(.{
         .name = "vulkan_tutorial",
         .root_module = b.createModule(.{
