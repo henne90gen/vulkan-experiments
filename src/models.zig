@@ -175,22 +175,6 @@ pub const Model = struct {
 
     pub fn vertex_description(_: *const Model) vk.VertexDescription {
         const stride = @sizeOf(f32) * 10;
-        const new_stride = @sizeOf(Vertex);
-        std.debug.print("stride: {d} vs {d}\n", .{ stride, new_stride });
-        const position_offset = 0;
-        const texture_coordinate_offset = @sizeOf(f32) * 4;
-        const normal_offset = @sizeOf(f32) * 7;
-        const new_position_offset = @offsetOf(Vertex, "position");
-        const new_texture_coordinate_offset = @offsetOf(Vertex, "texture_coordinate");
-        const new_normal_offset = @offsetOf(Vertex, "normal");
-        std.debug.print("offsets: {d},{d},{d} vs {d},{d},{d}\n", .{
-            position_offset,
-            texture_coordinate_offset,
-            normal_offset,
-            new_position_offset,
-            new_texture_coordinate_offset,
-            new_normal_offset,
-        });
         return .{
             .binding_descriptions = &[_]vk.c.VkVertexInputBindingDescription{
                 .{

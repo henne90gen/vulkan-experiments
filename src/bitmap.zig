@@ -12,8 +12,8 @@ pub const Bitmap = struct {
             return error.UnsupportedBitmapFormat;
         }
 
-        if (bitmap_info.bits_per_pixel % 8 != 0) {
-            return error.BitsPerPixelNotByteAligned;
+        if (bitmap_info.bits_per_pixel != 24) {
+            return error.UnsupportedColorFormat;
         }
 
         const bytes_per_pixel = bitmap_info.bits_per_pixel / 8;
@@ -22,7 +22,7 @@ pub const Bitmap = struct {
         const row_size = @divFloor(bitmap_info.width * bitmap_info.bits_per_pixel + 31, 32) * 4;
         for (0..@intCast(bitmap_info.height)) |row| {
             for (0..@intCast(bitmap_info.width)) |col| {
-                for (0..bitmap_info.bits_per_pixel / 8) |bpp_idx| {
+                for (0..bytes_per_pixel) |bpp_idx| {
                     const data_offset: i32 = @intCast(header.data_offset);
                     const row_: i32 = @intCast(row);
                     const col_: i32 = @intCast(col);
@@ -70,6 +70,10 @@ const BitmapInfoHeader = MemoryMappedStruct(struct {
 fn MemoryMappedStruct(comptime T: type) type {
     const info = @typeInfo(T);
 
+    if (info.@"struct".decls.len != 0) {
+        @compileError("MemoryMappedStruct does not support structs with declarations (such as functions)");
+    }
+
     var fields = [_]std.builtin.Type.StructField{.{
         .name = "",
         .type = T,
@@ -88,12 +92,14 @@ fn MemoryMappedStruct(comptime T: type) type {
         };
     }
 
-    return @Type(.{ .@"struct" = .{
-        .is_tuple = info.@"struct".is_tuple,
-        .layout = .@"extern",
-        .fields = &fields,
-        .decls = &.{},
-    } });
+    return @Type(.{
+        .@"struct" = .{
+            .is_tuple = info.@"struct".is_tuple,
+            .layout = .@"extern",
+            .fields = &fields,
+            .decls = &.{},
+        },
+    });
 }
 
 const t = std.testing;

@@ -105,6 +105,9 @@ pub fn main() !void {
         sync_objects_list[i] = sync_objects;
     }
 
+    const texture_image = try vk.createTextureImage(physical_device, &device, command_pool, bitmap.pixels, @intCast(bitmap.width), @intCast(bitmap.height), 3);
+    defer texture_image.deinit(&device);
+
     const vertex_data = try model.to_interleaved_data(gpa);
     defer gpa.free(vertex_data);
 
