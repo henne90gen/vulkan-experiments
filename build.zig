@@ -30,8 +30,8 @@ pub fn build(b: *std.Build) !void {
     exe.root_module.addCMacro("GLFW_INCLUDE_VULKAN", "1");
 
     // Vulkan
+    const vulkan_sdk_path = b.option([]const u8, "vulkan-sdk-path", "Path to Vulkan SDK");
     if (builtin.os.tag == .windows) {
-        const vulkan_sdk_path = b.option([]const u8, "vulkan-sdk-path", "Path to Vulkan SDK");
         if (vulkan_sdk_path == null) {
             std.debug.print("Missing required option -Dvulkan-sdk-path", .{});
             return error.MissingVulkanSDKPath;

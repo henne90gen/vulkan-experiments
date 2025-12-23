@@ -19,5 +19,5 @@ jobs:
         with:
           version: 1.4.328.1
           cache: true
-      - run: zig build -Dvulkan-sdk-path=$VULKAN_SDK
-      - run: zig build test -Dvulkan-sdk-path=$VULKAN_SDK
+      - run: zig build -Dvulkan-sdk-path="$VULKAN_SDK"
+      - run: zig build test -Dvulkan-sdk-path="$VULKAN_SDK"
