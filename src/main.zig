@@ -2,9 +2,11 @@ const std = @import("std");
 
 const glfw = @import("glfw.zig");
 const vk = @import("vulkan.zig");
+const models = @import("models.zig");
 
 const shader_vert = @embedFile("shader.vert.spv");
 const shader_frag = @embedFile("shader.frag.spv");
+const suzanne = @embedFile("models/suzanne.obj");
 
 const MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -79,6 +81,8 @@ pub fn main() !void {
         const sync_objects = try vk.createSyncObjects(&device);
         sync_objects_list[i] = sync_objects;
     }
+
+    _ = try models.Model.from_memory(gpa, suzanne);
 
     const vertices = [_]f32{
         0.0, -0.5, 1.0, 0.0, 0.0, // v0
@@ -245,4 +249,8 @@ fn drawFrame(
     std.debug.print("Frame time: {d:.2} ms - {d} fps\n", .{ frame_time_ms, 1000.0 / frame_time_ms });
 
     return false;
+}
+
+test "loads simple triangle model" {
+    std.testing.refAllDecls(@This());
 }
