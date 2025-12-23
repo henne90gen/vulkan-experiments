@@ -24,12 +24,12 @@ jobs:
           cache: true
           stripdown: true
 
-      - if: startsWith(matrix.os, 'linux')
+      - if: startsWith(matrix.os, 'ubuntu')
         run: zig build -Dvulkan-sdk-path="$VULKAN_SDK"
       - if: startsWith(matrix.os, 'windows')
         run: zig build -Dvulkan-sdk-path="$env:VULKAN_SDK"
 
-      - if: startsWith(matrix.os, 'linux')
+      - if: startsWith(matrix.os, 'ubuntu')
         run: zig build -Dvulkan-sdk-path="$VULKAN_SDK" test
       - if: startsWith(matrix.os, 'windows')
         run: zig build -Dvulkan-sdk-path="$env:VULKAN_SDK" test
