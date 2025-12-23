@@ -20,16 +20,30 @@ const WindowState = struct {
     primitives: std.ArrayList(Primitive),
     ui_elements: std.ArrayList(UiElement),
 
-    mode: union(enum) {
-        navigation: NavigationData,
-        creating_point,
-        creating_line: LineCreationData,
-    } = .{ .navigation = .{} },
+    mode: InteractionMode = .{ .navigation = .{} },
 
     pub fn deinit(self: *WindowState) void {
         self.primitives.deinit(self.allocator);
         self.ui_elements.deinit(self.allocator);
     }
+
+    pub fn toggleMode(self: *WindowState, btn: *Button, new_mode: InteractionMode) void {
+        self.mode = new_mode;
+        for (self.ui_elements.items) |*ui_element| {
+            switch (ui_element.*) {
+                .button => |*other_btn| {
+                    other_btn.render_hints.selected = false;
+                },
+            }
+        }
+        btn.render_hints.selected = true;
+    }
+};
+
+const InteractionMode = union(enum) {
+    navigation: NavigationData,
+    creating_point,
+    creating_line: LineCreationData,
 };
 
 const LineCreationData = struct {
@@ -54,19 +68,23 @@ const Primitive = union(enum) {
 };
 
 const UiElement = union(enum) {
-    button: struct {
-        position: [2]f32,
-        size: [2]f32,
-        image: ButtonImage,
-        render_hints: rd.RenderHints = .{ .ui_element = true },
-        on_click: *const fn (window: *glfw.c.GLFWwindow, window_state: *WindowState) void,
-    },
+    button: Button,
+};
+
+const Button = struct {
+    position: [2]f32,
+    size: [2]f32,
+    image: ButtonImage,
+    render_hints: rd.RenderHints = .{ .ui_element = true },
+    on_click: *const fn (btn: *Button, window: *glfw.c.GLFWwindow, window_state: *WindowState) void,
 };
 
 const ButtonImage = enum(i32) {
-    Line = 0,
-    Arc = 1,
-    Circle = 2,
+    Navigation = 0,
+    Point = 1,
+    Line = 2,
+    Arc = 3,
+    Circle = 4,
 };
 
 pub fn main() !void {
@@ -188,21 +206,41 @@ pub fn main() !void {
     }
 }
 
-fn createLineClicked(window: *glfw.c.GLFWwindow, window_state: *WindowState) void {
+fn navigationClicked(btn: *Button, window: *glfw.c.GLFWwindow, window_state: *WindowState) void {
     _ = window;
-    window_state.mode = .{ .creating_line = .{} };
+    window_state.mode = .{ .navigation = .{} };
+    for (window_state.ui_elements.items) |*ui_element| {
+        switch (ui_element.*) {
+            .button => |*other_btn| {
+                other_btn.render_hints.selected = false;
+            },
+        }
+    }
+    btn.render_hints.selected = true;
+    std.debug.print("Switched to navigation mode\n", .{});
+}
+
+fn createPointClicked(btn: *Button, window: *glfw.c.GLFWwindow, window_state: *WindowState) void {
+    _ = window;
+    window_state.toggleMode(btn, .creating_point);
     std.debug.print("Switched to creating_line mode\n", .{});
 }
 
-fn createArcClicked(window: *glfw.c.GLFWwindow, window_state: *WindowState) void {
+fn createLineClicked(btn: *Button, window: *glfw.c.GLFWwindow, window_state: *WindowState) void {
     _ = window;
-    window_state.mode = .{ .creating_line = .{} };
+    window_state.toggleMode(btn, .{ .creating_line = .{} });
+    std.debug.print("Switched to creating_line mode\n", .{});
+}
+
+fn createArcClicked(btn: *Button, window: *glfw.c.GLFWwindow, window_state: *WindowState) void {
+    _ = window;
+    window_state.toggleMode(btn, .{ .creating_line = .{} });
     std.debug.print("Switched to creating_arc mode\n", .{});
 }
 
-fn createCircleClicked(window: *glfw.c.GLFWwindow, window_state: *WindowState) void {
+fn createCircleClicked(btn: *Button, window: *glfw.c.GLFWwindow, window_state: *WindowState) void {
     _ = window;
-    window_state.mode = .{ .creating_line = .{} };
+    window_state.toggleMode(btn, .{ .creating_line = .{} });
     std.debug.print("Switched to creating_circle mode\n", .{});
 }
 
@@ -211,6 +249,27 @@ fn initUI(window_state: *WindowState) !void {
     var position_x: f32 = -1.0 + btn_size / 2.0;
     const position_y: f32 = 1.0 - btn_size / 2.0;
 
+    try window_state.ui_elements.append(window_state.allocator, .{
+        .button = .{
+            .position = .{ position_x, position_y },
+            .size = .{ btn_size, btn_size },
+            .image = .Navigation,
+            .on_click = &navigationClicked,
+            .render_hints = .{ .selected = true, .ui_element = true },
+        },
+    });
+
+    position_x += btn_size;
+    try window_state.ui_elements.append(window_state.allocator, .{
+        .button = .{
+            .position = .{ position_x, position_y },
+            .size = .{ btn_size, btn_size },
+            .image = .Point,
+            .on_click = &createPointClicked,
+        },
+    });
+
+    position_x += btn_size;
     try window_state.ui_elements.append(window_state.allocator, .{
         .button = .{
             .position = .{ position_x, position_y },
@@ -430,11 +489,11 @@ fn handleClickInUI(window: *glfw.c.GLFWwindow, button: i32, action: i32, window_
 
     const mousePosition = glfw.getMousePosition(window);
     const mouse_position = math.mapMousePositionToScreenSpace(window, 1.0, mousePosition);
-    for (window_state.ui_elements.items) |ui_elemnt| {
-        switch (ui_elemnt) {
-            .button => |btn| {
+    for (window_state.ui_elements.items) |*ui_elemnt| {
+        switch (ui_elemnt.*) {
+            .button => |*btn| {
                 if (math.rectContainsPoint(btn.position, btn.size, mouse_position)) {
-                    btn.on_click(window, window_state);
+                    btn.on_click(btn, window, window_state);
                     return true;
                 }
             },

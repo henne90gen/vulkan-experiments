@@ -14,9 +14,9 @@ pacman -S vulkan-validation-layers vulkan-utility-libraries
 - [x] add mouse controls for camera movement
 - [x] add ability to select primitives
 - [x] add texture atlas with icons
+- [x] add UI overlay
+  - [x] create custom UI system
 - [ ] add keyboard controls for camera movement
-- [ ] add UI overlay
-  - [ ] create custom UI system
 
 ## Cross Compilation
 
