@@ -39,7 +39,11 @@ pub fn build(b: *std.Build) !void {
         exe.root_module.addIncludePath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/include", .{vulkan_sdk_path.?}) });
         exe.root_module.addLibraryPath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/lib", .{vulkan_sdk_path.?}) });
     }
-    exe.root_module.linkSystemLibrary("vulkan", .{});
+    if (builtin.os.tag == .windows) {
+        exe.root_module.linkSystemLibrary("vulkan-1", .{});
+    } else {
+        exe.root_module.linkSystemLibrary("vulkan", .{});
+    }
 
     b.installArtifact(exe);
 
