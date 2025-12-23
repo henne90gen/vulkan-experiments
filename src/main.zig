@@ -3,12 +3,11 @@ const zm = @import("zmath");
 
 const glfw = @import("glfw.zig");
 const vk = @import("vulkan.zig");
-const models = @import("models.zig");
 const bmp = @import("bitmap.zig");
+const utils = @import("utils.zig");
 
 const shader_vert = @embedFile("shader.vert.spv");
 const shader_frag = @embedFile("shader.frag.spv");
-const suzanne = @embedFile("assets/suzanne.obj");
 const greenland_grid_velo = @embedFile("assets/greenland_grid_velo.bmp");
 
 test {
@@ -16,11 +15,30 @@ test {
 }
 
 const MAX_FRAMES_IN_FLIGHT = 2;
+const MAX_GEOMETRY_INSTANCES = 1000;
 
-const UniformBufferObject = struct {
-    model: zm.Mat align(16),
-    view: zm.Mat align(16),
-    projection: zm.Mat align(16),
+const PerFrameVulkanData = struct {
+    command_buffer: vk.c.VkCommandBuffer,
+    sync_objects: vk.SyncObjects,
+    uniform_buffer: vk.c.VkBuffer = undefined,
+    uniform_buffer_memory: vk.c.VkDeviceMemory = undefined,
+    uniform_buffer_mapped: *void = undefined,
+    descriptor_set: vk.c.VkDescriptorSet = undefined,
+};
+
+const UniformBufferObject = extern struct {
+    aspect_ratio: f32 align(4),
+};
+
+const Vertex = struct {
+    position: [2]f32 align(8),
+};
+
+const GeometryInstance = struct {
+    geometry_type: f32 align(4),
+    rotation: f32 align(4),
+    translation: [2]f32 align(8),
+    scale: [2]f32 align(8),
 };
 
 pub fn main() !void {
@@ -68,16 +86,13 @@ pub fn main() !void {
 
     std.debug.print("Image views count: {}\n", .{image_views.len});
 
-    const model = try models.Model.from_memory(gpa, suzanne);
-    defer model.deinit(gpa);
-
     const bitmap = try bmp.Bitmap.from_memory(gpa, greenland_grid_velo);
     defer bitmap.deinit(gpa);
 
     const descriptor_set_layout = try vk.createDescriptorSetLayout(&device);
     defer vk.destroyDescriptorSetLayout(&device, descriptor_set_layout);
 
-    const vertex_desription = model.vertex_description();
+    const vertex_desription = vertexDescription();
     const pipeline = try vk.createGraphicsPipeline(gpa, &device, &swap_chain, shader_vert, shader_frag, descriptor_set_layout, vertex_desription);
     defer pipeline.deinit(&device);
 
@@ -90,84 +105,43 @@ pub fn main() !void {
     const command_pool = try vk.createCommandPool(gpa, surface, &device);
     defer vk.destroyCommandPool(&device, command_pool);
 
-    var command_buffers = [_]vk.c.VkCommandBuffer{undefined} ** MAX_FRAMES_IN_FLIGHT;
-    var sync_objects_list = [_]vk.SyncObjects{undefined} ** MAX_FRAMES_IN_FLIGHT;
-    defer {
-        for (0..MAX_FRAMES_IN_FLIGHT) |i| {
-            vk.destroyCommandBuffer(&device, command_pool, command_buffers[i]);
-            sync_objects_list[i].deinit(&device);
-        }
-    }
-    for (0..MAX_FRAMES_IN_FLIGHT) |i| {
-        const command_buffer = try vk.createCommandBuffer(&device, command_pool);
-        command_buffers[i] = command_buffer;
-
-        const sync_objects = try vk.createSyncObjects(&device);
-        sync_objects_list[i] = sync_objects;
-    }
-
     const texture_image = try vk.createTextureImage(&device, command_pool, bitmap.pixels, bitmap.width, bitmap.height, bitmap.bytes_per_pixel);
     defer texture_image.deinit(&device);
 
     const texture_sampler = try vk.createTextureSampler(&device);
     defer vk.destroyTextureSampler(&device, texture_sampler);
 
-    const vertex_data = try model.to_interleaved_data(gpa);
-    defer gpa.free(vertex_data);
+    const rectangle_vertex_data = [_]Vertex{
+        .{ .position = .{ 0.5, -0.5 } },
+        .{ .position = .{ 0.5, 0.5 } },
+        .{ .position = .{ -0.5, 0.5 } },
+        .{ .position = .{ 0.5, -0.5 } },
+        .{ .position = .{ -0.5, 0.5 } },
+        .{ .position = .{ -0.5, -0.5 } },
 
-    const buffer_size = @sizeOf(@TypeOf(vertex_data[0])) * vertex_data.len;
-    const vertex_buffer = try vk.createBuffer(&device, vk.c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, buffer_size);
-    defer vk.destroyBuffer(&device, vertex_buffer);
-
-    const vertex_buffer_memory = try vk.createBufferMemory(&device, vertex_buffer, vk.c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    defer vk.destroyBufferMemory(&device, vertex_buffer_memory);
-
-    try vk.mapMemory(&device, vertex_buffer_memory, @ptrCast(vertex_data));
-
-    const rectangle_vertex_buffer = try vk.createBuffer(&device, vk.c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, buffer_size);
+        .{ .position = .{ 0.5, -0.5 } },
+        .{ .position = .{ -0.5, 0.5 } },
+        .{ .position = .{ 0.5, 0.5 } },
+        .{ .position = .{ 0.5, -0.5 } },
+        .{ .position = .{ -0.5, -0.5 } },
+        .{ .position = .{ -0.5, 0.5 } },
+    };
+    const rectangle_buffer_size = @sizeOf(@TypeOf(rectangle_vertex_data[0])) * rectangle_vertex_data.len;
+    const rectangle_vertex_buffer = try vk.createBuffer(&device, vk.c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, rectangle_buffer_size);
     defer vk.destroyBuffer(&device, rectangle_vertex_buffer);
 
     const rectangle_vertex_buffer_memory = try vk.createBufferMemory(&device, rectangle_vertex_buffer, vk.c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     defer vk.destroyBufferMemory(&device, rectangle_vertex_buffer_memory);
 
-    const rectangle_vertex_data = [_]models.Vertex{
-        // front
-        .{ .position = .{ 0.5, -0.5, 0.0, 1.0 }, .texture_coordinate = .{ 0.0, 1.0, 0.0 }, .normal = .{ 1.0, 1.0, 1.0 } },
-        .{ .position = .{ 0.5, 0.5, 0.0, 1.0 }, .texture_coordinate = .{ 0.0, 0.0, 0.0 }, .normal = .{ 1.0, 1.0, 1.0 } },
-        .{ .position = .{ -0.5, 0.5, 0.0, 1.0 }, .texture_coordinate = .{ 1.0, 0.0, 0.0 }, .normal = .{ 1.0, 1.0, 1.0 } },
-        .{ .position = .{ 0.5, -0.5, 0.0, 1.0 }, .texture_coordinate = .{ 0.0, 1.0, 0.0 }, .normal = .{ 1.0, 1.0, 1.0 } },
-        .{ .position = .{ -0.5, 0.5, 0.0, 1.0 }, .texture_coordinate = .{ 1.0, 0.0, 0.0 }, .normal = .{ 1.0, 1.0, 1.0 } },
-        .{ .position = .{ -0.5, -0.5, 0.0, 1.0 }, .texture_coordinate = .{ 1.0, 1.0, 0.0 }, .normal = .{ 1.0, 1.0, 1.0 } },
-
-        // back
-        .{ .position = .{ 0.5, -0.5, 0.0, 1.0 }, .texture_coordinate = .{ 1.0, 1.0, 0.0 }, .normal = .{ 1.0, 1.0, 1.0 } },
-        .{ .position = .{ -0.5, 0.5, 0.0, 1.0 }, .texture_coordinate = .{ 0.0, 0.0, 0.0 }, .normal = .{ 1.0, 1.0, 1.0 } },
-        .{ .position = .{ 0.5, 0.5, 0.0, 1.0 }, .texture_coordinate = .{ 1.0, 0.0, 0.0 }, .normal = .{ 1.0, 1.0, 1.0 } },
-        .{ .position = .{ 0.5, -0.5, 0.0, 1.0 }, .texture_coordinate = .{ 1.0, 1.0, 0.0 }, .normal = .{ 1.0, 1.0, 1.0 } },
-        .{ .position = .{ -0.5, -0.5, 0.0, 1.0 }, .texture_coordinate = .{ 0.0, 1.0, 0.0 }, .normal = .{ 1.0, 1.0, 1.0 } },
-        .{ .position = .{ -0.5, 0.5, 0.0, 1.0 }, .texture_coordinate = .{ 0.0, 0.0, 0.0 }, .normal = .{ 1.0, 1.0, 1.0 } },
-    };
     try vk.mapMemory(&device, rectangle_vertex_buffer_memory, @ptrCast(&rectangle_vertex_data));
 
-    var uniform_buffers = [_]vk.c.VkBuffer{undefined} ** MAX_FRAMES_IN_FLIGHT;
-    var uniform_buffers_memory = [_]vk.c.VkDeviceMemory{undefined} ** MAX_FRAMES_IN_FLIGHT;
-    var uniform_buffers_mapped = [_]*void{undefined} ** MAX_FRAMES_IN_FLIGHT;
-    for (0..MAX_FRAMES_IN_FLIGHT) |i| {
-        const ubo_size = @sizeOf(UniformBufferObject);
-        uniform_buffers[i] = try vk.createBuffer(&device, vk.c.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, ubo_size);
-        uniform_buffers_memory[i] = try vk.createBufferMemory(&device, uniform_buffers[i], vk.c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        const err = vk.c.vkMapMemory(device.device, uniform_buffers_memory[i], 0, ubo_size, 0, @ptrCast(&uniform_buffers_mapped[i]));
-        if (err != vk.c.VK_SUCCESS) {
-            std.debug.print("Failed to map memory: {s}\n", .{vk.c.string_VkResult(err)});
-            return error.MapMemoryFailed;
-        }
-    }
-    defer {
-        for (0..MAX_FRAMES_IN_FLIGHT) |i| {
-            vk.destroyBufferMemory(&device, uniform_buffers_memory[i]);
-            vk.destroyBuffer(&device, uniform_buffers[i]);
-        }
-    }
+    const instance_buffer_size = @sizeOf(GeometryInstance) * MAX_GEOMETRY_INSTANCES;
+    std.debug.print("Instance buffer size: {}\n", .{instance_buffer_size});
+    const instance_buffer = try vk.createBuffer(&device, vk.c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, instance_buffer_size);
+    defer vk.destroyBuffer(&device, instance_buffer);
+
+    const instance_buffer_memory = try vk.createBufferMemory(&device, instance_buffer, vk.c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    defer vk.destroyBufferMemory(&device, instance_buffer_memory);
 
     const descriptor_pool = try vk.createDescriptorPool(&device, MAX_FRAMES_IN_FLIGHT);
     defer vk.destroyDescriptorPool(&device, descriptor_pool);
@@ -175,9 +149,33 @@ pub fn main() !void {
     const descriptor_sets = try vk.createDescriptorSets(gpa, &device, descriptor_pool, descriptor_set_layout, MAX_FRAMES_IN_FLIGHT);
     defer vk.destroyDescriptorSets(gpa, descriptor_sets);
 
-    for (0..MAX_FRAMES_IN_FLIGHT) |i| {
+    var per_frame_vk_data = [_]PerFrameVulkanData{undefined} ** MAX_FRAMES_IN_FLIGHT;
+    defer {
+        for (per_frame_vk_data) |data| {
+            vk.destroyCommandBuffer(&device, command_pool, data.command_buffer);
+            data.sync_objects.deinit(&device);
+            vk.destroyBufferMemory(&device, data.uniform_buffer_memory);
+            vk.destroyBuffer(&device, data.uniform_buffer);
+        }
+    }
+    for (0..per_frame_vk_data.len) |i| {
+        var data = &per_frame_vk_data[i];
+        data.descriptor_set = descriptor_sets[i];
+
+        data.command_buffer = try vk.createCommandBuffer(&device, command_pool);
+        data.sync_objects = try vk.createSyncObjects(&device);
+
+        const ubo_size = @sizeOf(UniformBufferObject);
+        data.uniform_buffer = try vk.createBuffer(&device, vk.c.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, ubo_size);
+        data.uniform_buffer_memory = try vk.createBufferMemory(&device, data.uniform_buffer, vk.c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        const err = vk.c.vkMapMemory(device.device, data.uniform_buffer_memory, 0, ubo_size, 0, @ptrCast(&data.uniform_buffer_mapped));
+        if (err != vk.c.VK_SUCCESS) {
+            std.debug.print("Failed to map memory: {s}\n", .{vk.c.string_VkResult(err)});
+            return error.MapMemoryFailed;
+        }
+
         const buffer_info = vk.c.VkDescriptorBufferInfo{
-            .buffer = uniform_buffers[i],
+            .buffer = data.uniform_buffer,
             .offset = 0,
             .range = @sizeOf(UniformBufferObject), // could also be VK_WHOLE_SIZE
         };
@@ -191,7 +189,7 @@ pub fn main() !void {
         const descriptor_write = [_]vk.c.VkWriteDescriptorSet{
             .{
                 .sType = vk.c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = descriptor_sets[i],
+                .dstSet = data.descriptor_set,
                 .dstBinding = 0,
                 .dstArrayElement = 0,
                 .descriptorType = vk.c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
@@ -202,7 +200,7 @@ pub fn main() !void {
             },
             .{
                 .sType = vk.c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = descriptor_sets[i],
+                .dstSet = data.descriptor_set,
                 .dstBinding = 1,
                 .dstArrayElement = 0,
                 .descriptorType = vk.c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -227,38 +225,44 @@ pub fn main() !void {
         glfw.getFramebufferSize(window, &new_width, &new_height);
 
         rotation += 0.01;
-        const object_to_world = zm.rotationY(rotation);
-        const world_to_view = zm.lookAtRh(
-            zm.f32x4(0.0, 0.0, 3.0, 1.0), // eye position
-            zm.f32x4(0.0, 0.0, 0.0, 1.0), // focus point
-            zm.f32x4(0.0, -1.0, 0.0, 0.0), // up direction ('w' coord is zero because this is a vector not a point)
-        );
-        const aspect_ratio: f32 = @as(f32, @floatFromInt(new_width)) / @as(f32, @floatFromInt(new_height));
-        const view_to_clip = zm.perspectiveFovRh(0.25 * std.math.pi, aspect_ratio, 0.1, 20.0);
-
         const ubo = UniformBufferObject{
-            .model = object_to_world,
-            .view = world_to_view,
-            .projection = view_to_clip,
+            .aspect_ratio = @as(f32, @floatFromInt(new_width)) / @as(f32, @floatFromInt(new_height)),
         };
 
-        const command_buffer = command_buffers[current_frame];
-        const sync_objects = &sync_objects_list[current_frame];
-        const uniform_buffer_mapped = uniform_buffers_mapped[current_frame];
-        const descriptor_set = descriptor_sets[current_frame];
+        const geometry_instances = [_]GeometryInstance{
+            .{
+                .geometry_type = 1,
+                .rotation = 0.0,
+                .translation = [2]f32{ 0.5, 0.0 },
+                .scale = [2]f32{ 1.0, 1.0 },
+            },
+            .{
+                .geometry_type = 1,
+                .rotation = 0.0,
+                .translation = [2]f32{ -0.5, 0.0 },
+                .scale = [2]f32{ 1.0, 1.0 },
+            },
+            .{
+                .geometry_type = 1,
+                .rotation = rotation,
+                .translation = [2]f32{ 0.0, 0.0 },
+                .scale = [2]f32{ 1.0, 1.0 },
+            },
+        };
+        try vk.mapMemory(&device, instance_buffer_memory, @ptrCast(&geometry_instances));
 
+        const vk_data = per_frame_vk_data[current_frame];
         const should_recreate_swap_chain = try drawFrame(
             &device,
             &swap_chain,
             &pipeline,
             framebuffers,
-            command_buffer,
-            sync_objects,
-            descriptor_set,
-            uniform_buffer_mapped,
+            &vk_data,
             &ubo,
-            &[_]vk.c.VkBuffer{ rectangle_vertex_buffer, vertex_buffer },
-            &[_]usize{ rectangle_vertex_data.len, vertex_data.len },
+            rectangle_vertex_buffer,
+            rectangle_vertex_data.len,
+            instance_buffer,
+            geometry_instances.len,
         );
         if (should_recreate_swap_chain) {
             const result = try vk.recreateSwapChain(
@@ -317,33 +321,83 @@ fn createWindowSurface(instance: vk.c.VkInstance, window: *glfw.c.GLFWwindow) vk
     return surface;
 }
 
+fn vertexDescription() vk.VertexDescription {
+    const vertex_stride = @sizeOf(Vertex);
+    const instance_stride = @sizeOf(GeometryInstance);
+    return .{
+        .binding_descriptions = &[_]vk.c.VkVertexInputBindingDescription{
+            .{
+                .binding = 0,
+                .stride = vertex_stride,
+                .inputRate = vk.c.VK_VERTEX_INPUT_RATE_VERTEX,
+            },
+            .{
+                .binding = 1,
+                .stride = instance_stride,
+                .inputRate = vk.c.VK_VERTEX_INPUT_RATE_INSTANCE,
+            },
+        },
+        .attribute_descriptions = &[_]vk.c.VkVertexInputAttributeDescription{
+            .{
+                .binding = 0,
+                .location = 0,
+                .format = vk.c.VK_FORMAT_R32G32B32A32_SFLOAT,
+                .offset = @offsetOf(Vertex, "position"),
+            },
+            .{
+                .binding = 1,
+                .location = 1,
+                .format = vk.c.VK_FORMAT_R32_SFLOAT,
+                .offset = @offsetOf(GeometryInstance, "geometry_type"),
+            },
+            .{
+                .binding = 1,
+                .location = 2,
+                .format = vk.c.VK_FORMAT_R32_SFLOAT,
+                .offset = @offsetOf(GeometryInstance, "rotation"),
+            },
+            .{
+                .binding = 1,
+                .location = 3,
+                .format = vk.c.VK_FORMAT_R32G32_SFLOAT,
+                .offset = @offsetOf(GeometryInstance, "translation"),
+            },
+            .{
+                .binding = 1,
+                .location = 4,
+                .format = vk.c.VK_FORMAT_R32G32_SFLOAT,
+                .offset = @offsetOf(GeometryInstance, "scale"),
+            },
+        },
+    };
+}
+
 fn drawFrame(
     device: *const vk.Device,
     swap_chain: *const vk.SwapChain,
     pipeline: *const vk.Pipeline,
     framebuffers: []vk.c.VkFramebuffer,
-    command_buffer: vk.c.VkCommandBuffer,
-    sync_objects: *const vk.SyncObjects,
-    descriptor_set: vk.c.VkDescriptorSet,
-    uniform_buffer_mapped: *void,
+    vk_data: *const PerFrameVulkanData,
     ubo: *const UniformBufferObject,
-    vertex_buffers: []const vk.c.VkBuffer,
-    vertex_counts: []const usize,
+    vertex_buffer: vk.c.VkBuffer,
+    vertex_count: usize,
+    instance_buffer: vk.c.VkBuffer,
+    instance_count: usize,
 ) !bool {
-    var err = vk.c.vkWaitForFences(device.device, 1, &sync_objects.in_flight_fence, vk.c.VK_TRUE, vk.c.UINT64_MAX);
+    var err = vk.c.vkWaitForFences(device.device, 1, &vk_data.sync_objects.in_flight_fence, vk.c.VK_TRUE, vk.c.UINT64_MAX);
     if (err != vk.c.VK_SUCCESS) {
         std.debug.print("Failed to wait for in-flight fence: {s}\n", .{vk.c.string_VkResult(err)});
         return false;
     }
 
-    err = vk.c.vkResetFences(device.device, 1, &sync_objects.in_flight_fence);
+    err = vk.c.vkResetFences(device.device, 1, &vk_data.sync_objects.in_flight_fence);
     if (err != vk.c.VK_SUCCESS) {
         std.debug.print("Failed to reset in-flight fence: {s}\n", .{vk.c.string_VkResult(err)});
         return false;
     }
 
     var image_index: u32 = 0;
-    err = vk.c.vkAcquireNextImageKHR(device.device, swap_chain.swap_chain, vk.c.UINT64_MAX, sync_objects.image_available_semaphore, @ptrCast(vk.c.VK_NULL_HANDLE), &image_index);
+    err = vk.c.vkAcquireNextImageKHR(device.device, swap_chain.swap_chain, vk.c.UINT64_MAX, vk_data.sync_objects.image_available_semaphore, @ptrCast(vk.c.VK_NULL_HANDLE), &image_index);
     if (err == vk.c.VK_ERROR_OUT_OF_DATE_KHR) {
         return true;
     } else if (err != vk.c.VK_SUCCESS and err != vk.c.VK_SUBOPTIMAL_KHR) {
@@ -351,32 +405,42 @@ fn drawFrame(
         return error.AcquiringSwapChainImageFailed;
     }
 
-    err = vk.c.vkResetCommandBuffer(command_buffer, 0);
+    err = vk.c.vkResetCommandBuffer(vk_data.command_buffer, 0);
     if (err != vk.c.VK_SUCCESS) {
         std.debug.print("Failed to reset command buffer: {s}\n", .{vk.c.string_VkResult(err)});
         return error.ResettingCommandBufferFailed;
     }
 
-    try recordCommandBuffer(swap_chain, pipeline, framebuffers[image_index], command_buffer, descriptor_set, vertex_buffers, vertex_counts);
+    try recordCommandBuffer(
+        swap_chain,
+        pipeline,
+        framebuffers[image_index],
+        vk_data.command_buffer,
+        vk_data.descriptor_set,
+        vertex_buffer,
+        vertex_count,
+        instance_buffer,
+        instance_count,
+    );
 
-    const buf: *UniformBufferObject = @ptrCast(@alignCast(uniform_buffer_mapped));
+    const buf: *UniformBufferObject = @ptrCast(@alignCast(vk_data.uniform_buffer_mapped));
     buf.* = ubo.*;
 
-    const wait_semaphores = [_]vk.c.VkSemaphore{sync_objects.image_available_semaphore};
+    const wait_semaphores = [_]vk.c.VkSemaphore{vk_data.sync_objects.image_available_semaphore};
     const wait_stages = [_]vk.c.VkPipelineStageFlags{vk.c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-    const signal_semaphores = [_]vk.c.VkSemaphore{sync_objects.render_finished_semaphore};
+    const signal_semaphores = [_]vk.c.VkSemaphore{vk_data.sync_objects.render_finished_semaphore};
     const submit_info = vk.c.VkSubmitInfo{
         .sType = vk.c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .waitSemaphoreCount = 1,
         .pWaitSemaphores = &wait_semaphores[0],
         .pWaitDstStageMask = &wait_stages[0],
         .commandBufferCount = 1,
-        .pCommandBuffers = &command_buffer,
+        .pCommandBuffers = &vk_data.command_buffer,
         .signalSemaphoreCount = 1,
         .pSignalSemaphores = &signal_semaphores[0],
     };
 
-    err = vk.c.vkQueueSubmit(device.graphics_queue, 1, &submit_info, sync_objects.in_flight_fence);
+    err = vk.c.vkQueueSubmit(device.graphics_queue, 1, &submit_info, vk_data.sync_objects.in_flight_fence);
     if (err != vk.c.VK_SUCCESS) {
         std.debug.print("Failed to submit draw command buffer: {s}\n", .{vk.c.string_VkResult(err)});
         return error.SubmittingDrawCommandBufferFailed;
@@ -410,8 +474,10 @@ pub fn recordCommandBuffer(
     framebuffer: vk.c.VkFramebuffer,
     command_buffer: vk.c.VkCommandBuffer,
     descriptor_set: vk.c.VkDescriptorSet,
-    vertex_buffers: []const vk.c.VkBuffer,
-    vertex_counts: []const usize,
+    vertex_buffer: vk.c.VkBuffer,
+    vertex_count: usize,
+    instance_buffer: vk.c.VkBuffer,
+    instance_count: usize,
 ) !void {
     const begin_info = vk.c.VkCommandBufferBeginInfo{
         .sType = vk.c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -463,17 +529,11 @@ pub fn recordCommandBuffer(
 
     vk.c.vkCmdBindDescriptorSets(command_buffer, vk.c.VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline.pipeline_layout, 0, 1, &descriptor_set, 0, null);
 
-    for (0..vertex_buffers.len) |i| {
-        if (i != 0) {
-            break;
-        }
+    const offsets = [_]vk.c.VkDeviceSize{ 0, 0 };
+    const vk_vertex_buffers = [_]vk.c.VkBuffer{ vertex_buffer, instance_buffer };
+    vk.c.vkCmdBindVertexBuffers(command_buffer, 0, vk_vertex_buffers.len, &vk_vertex_buffers, &offsets);
 
-        const vk_vertex_buffers = [_]vk.c.VkBuffer{vertex_buffers[i]};
-        const offsets = [_]vk.c.VkDeviceSize{0};
-        vk.c.vkCmdBindVertexBuffers(command_buffer, 0, 1, &vk_vertex_buffers, &offsets);
-
-        vk.c.vkCmdDraw(command_buffer, @intCast(vertex_counts[i]), 1, 0, 0);
-    }
+    vk.c.vkCmdDraw(command_buffer, @intCast(vertex_count), @intCast(instance_count), 0, 0);
 
     vk.c.vkCmdEndRenderPass(command_buffer);
 
