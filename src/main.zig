@@ -89,7 +89,7 @@ pub fn main() !void {
     try window_state.geometry_instances.append(window_state.allocator, .{
         .geometry_type = 1,
         .rotation = window_state.rotation,
-        .translation = [2]f32{ 0.0, 0.5 },
+        .translation = [2]f32{ 0.0, 0.0 },
         .scale = [2]f32{ 1.0, 1.0 },
     });
 

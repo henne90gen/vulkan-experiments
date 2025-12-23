@@ -304,7 +304,7 @@ pub const Renderer = struct {
         }
 
         const clear_values = [_]vk.c.VkClearValue{
-            .{ .color = .{ .float32 = .{ 0.0, 0.0, 0.0, 1.0 } } },
+            .{ .color = .{ .float32 = .{ 0.94, 0.95, 0.96, 1.0 } } },
             .{ .depthStencil = .{ .depth = 1.0, .stencil = 0.0 } },
         };
         const render_pass_info = vk.c.VkRenderPassBeginInfo{
