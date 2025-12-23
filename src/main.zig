@@ -11,7 +11,6 @@ test {
     std.testing.refAllDeclsRecursive(@This());
 }
 
-const MAX_FRAMES_IN_FLIGHT = 2;
 const INITIAL_GEOMETRY_INSTANCE_COUNT = 1;
 
 const WindowState = struct {
@@ -46,7 +45,7 @@ pub fn main() !void {
     var window_state = WindowState{
         .allocator = allocator,
         .geometry_instances = std.ArrayList(rd.GeometryInstance).empty,
-        .zoom = 1.0,
+        .zoom = 0.1,
         .rotation = 0.0,
     };
     defer window_state.deinit();
@@ -56,7 +55,7 @@ pub fn main() !void {
     glfw.setMouseButtonCallback(window, mouseButtonCallback);
     glfw.setScrollCallback(window, scrollCallback);
 
-    var renderer = rd.Renderer.init(allocator, window);
+    var renderer = try rd.Renderer.init(allocator, window);
     defer renderer.deinit();
 
     const rectangle_vertex_data = [_]rd.Vertex{
@@ -84,75 +83,8 @@ pub fn main() !void {
     var instance_buffer_memory = try vk.createBufferMemory(&renderer.device, instance_buffer, vk.c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     defer vk.destroyBufferMemory(&renderer.device, instance_buffer_memory);
 
-    const descriptor_pool = try vk.createDescriptorPool(&device, MAX_FRAMES_IN_FLIGHT);
-    defer vk.destroyDescriptorPool(&device, descriptor_pool);
-
-    const descriptor_sets = try vk.createDescriptorSets(allocator, &device, descriptor_pool, descriptor_set_layout, MAX_FRAMES_IN_FLIGHT);
-    defer vk.destroyDescriptorSets(allocator, descriptor_sets);
-
-    var per_frame_vk_data = [_]rd.PerFrameVulkanData{undefined} ** MAX_FRAMES_IN_FLIGHT;
-    defer {
-        for (per_frame_vk_data) |data| {
-            vk.destroyCommandBuffer(&device, command_pool, data.command_buffer);
-            data.sync_objects.deinit(&device);
-            vk.destroyBufferMemory(&device, data.uniform_buffer_memory);
-            vk.destroyBuffer(&device, data.uniform_buffer);
-        }
-    }
-    for (0..per_frame_vk_data.len) |i| {
-        var data = &per_frame_vk_data[i];
-        data.descriptor_set = descriptor_sets[i];
-
-        data.command_buffer = try vk.createCommandBuffer(&device, command_pool);
-        data.sync_objects = try vk.createSyncObjects(&device);
-
-        const ubo_size = @sizeOf(rd.UniformBufferObject);
-        data.uniform_buffer = try vk.createBuffer(&device, vk.c.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, ubo_size);
-        data.uniform_buffer_memory = try vk.createBufferMemory(&device, data.uniform_buffer, vk.c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        const err = vk.c.vkMapMemory(device.device, data.uniform_buffer_memory, 0, ubo_size, 0, @ptrCast(&data.uniform_buffer_mapped));
-        if (err != vk.c.VK_SUCCESS) {
-            std.debug.print("Failed to map memory: {s}\n", .{vk.c.string_VkResult(err)});
-            return error.MapMemoryFailed;
-        }
-
-        const buffer_info = vk.c.VkDescriptorBufferInfo{
-            .buffer = data.uniform_buffer,
-            .offset = 0,
-            .range = @sizeOf(rd.UniformBufferObject), // could also be VK_WHOLE_SIZE
-        };
-
-        const image_info = vk.c.VkDescriptorImageInfo{
-            .imageLayout = vk.c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            .imageView = texture_image.image_view.?,
-            .sampler = texture_sampler,
-        };
-
-        const descriptor_write = [_]vk.c.VkWriteDescriptorSet{
-            .{
-                .sType = vk.c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = data.descriptor_set,
-                .dstBinding = 0,
-                .dstArrayElement = 0,
-                .descriptorType = vk.c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                .descriptorCount = 1,
-                .pBufferInfo = &buffer_info,
-                .pImageInfo = null,
-                .pTexelBufferView = null,
-            },
-            .{
-                .sType = vk.c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = data.descriptor_set,
-                .dstBinding = 1,
-                .dstArrayElement = 0,
-                .descriptorType = vk.c.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                .descriptorCount = 1,
-                .pBufferInfo = null,
-                .pImageInfo = &image_info,
-                .pTexelBufferView = null,
-            },
-        };
-        vk.c.vkUpdateDescriptorSets(device.device, descriptor_write.len, &descriptor_write[0], 0, null);
-    }
+    const per_frame_vk_data = try renderer.createPerFrameVkData();
+    defer renderer.destroyPerFrameVkData(per_frame_vk_data);
 
     try window_state.geometry_instances.append(window_state.allocator, .{
         .geometry_type = 1,
@@ -180,23 +112,20 @@ pub fn main() !void {
         }
 
         if (window_state.geometry_instances.items.len > current_geometry_instance_count) {
-            _ = vk.c.vkDeviceWaitIdle(device.device);
+            _ = vk.c.vkDeviceWaitIdle(renderer.device.device);
 
             current_geometry_instance_count = window_state.geometry_instances.items.len;
-            vk.destroyBufferMemory(&device, instance_buffer_memory);
-            vk.destroyBuffer(&device, instance_buffer);
+            vk.destroyBufferMemory(&renderer.device, instance_buffer_memory);
+            vk.destroyBuffer(&renderer.device, instance_buffer);
             instance_buffer_size = window_state.geometry_instances.items.len * @sizeOf(rd.GeometryInstance);
-            instance_buffer = try vk.createBuffer(&device, vk.c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, instance_buffer_size);
-            instance_buffer_memory = try vk.createBufferMemory(&device, instance_buffer, vk.c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            instance_buffer = try vk.createBuffer(&renderer.device, vk.c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, instance_buffer_size);
+            instance_buffer_memory = try vk.createBufferMemory(&renderer.device, instance_buffer, vk.c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         }
-        try vk.mapMemory(&device, instance_buffer_memory, @ptrCast(window_state.geometry_instances.items));
+        try vk.mapMemory(&renderer.device, instance_buffer_memory, @ptrCast(window_state.geometry_instances.items));
 
         const vk_data = per_frame_vk_data[current_frame];
-        const should_recreate_swap_chain = try rd.drawFrame(
-            &device,
-            &swap_chain,
-            &pipeline,
-            framebuffers,
+        try renderer.drawFrame(
+            window,
             &vk_data,
             &ubo,
             rectangle_vertex_buffer,
@@ -204,25 +133,8 @@ pub fn main() !void {
             instance_buffer,
             window_state.geometry_instances.items.len,
         );
-        if (should_recreate_swap_chain) {
-            const result = try vk.recreateSwapChain(
-                allocator,
-                &device,
-                &pipeline,
-                surface,
-                &swap_chain,
-                image_views,
-                &depth_image,
-                framebuffers,
-                .{ .width = @intCast(new_framebuffer_size.width), .height = @intCast(new_framebuffer_size.height) },
-            );
-            swap_chain = result.swap_chain;
-            image_views = result.image_views;
-            depth_image = result.depth_image;
-            framebuffers = result.framebuffers;
-        }
 
-        current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
+        current_frame = (current_frame + 1) % @as(u32, @intCast(per_frame_vk_data.len));
 
         const end = std.time.nanoTimestamp();
         const frame_time_ns = end - start;
@@ -237,7 +149,7 @@ pub fn main() !void {
         }
     }
 
-    const err = vk.c.vkDeviceWaitIdle(device.device);
+    const err = vk.c.vkDeviceWaitIdle(renderer.device.device);
     if (err != vk.c.VK_SUCCESS) {
         std.debug.print("Failed to wait for device idle: {s}\n", .{vk.c.string_VkResult(err)});
         return;
