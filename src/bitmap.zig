@@ -46,26 +46,55 @@ pub const Bitmap = struct {
     }
 };
 
-const Header = extern struct {
-    signature: u16 align(1),
-    file_size: u32 align(1),
-    reserved: u32 align(1),
-    data_offset: u32 align(1),
-};
+const Header = MemoryMappedStruct(struct {
+    signature: u16,
+    file_size: u32,
+    reserved: u32,
+    data_offset: u32,
+});
 
-const BitmapInfoHeader = extern struct {
-    header_size: u32 align(1),
-    width: i32 align(1),
-    height: i32 align(1),
-    planes: u16 align(1),
-    bits_per_pixel: u16 align(1),
-    compression: u32 align(1),
-    image_size: u32 align(1),
-    x_pixels_per_meter: i32 align(1),
-    y_pixels_per_meter: i32 align(1),
-    colors_used: u32 align(1),
-    important_colors: u32 align(1),
-};
+const BitmapInfoHeader = MemoryMappedStruct(struct {
+    header_size: u32,
+    width: i32,
+    height: i32,
+    planes: u16,
+    bits_per_pixel: u16,
+    compression: u32,
+    image_size: u32,
+    x_pixels_per_meter: i32,
+    y_pixels_per_meter: i32,
+    colors_used: u32,
+    important_colors: u32,
+});
+
+fn MemoryMappedStruct(comptime T: type) type {
+    const info = @typeInfo(T);
+
+    var fields = [_]std.builtin.Type.StructField{.{
+        .name = "",
+        .type = T,
+        .default_value_ptr = null,
+        .is_comptime = false,
+        .alignment = 1,
+    }} ** info.@"struct".fields.len;
+
+    for (0..info.@"struct".fields.len) |i| {
+        fields[i] = .{
+            .alignment = 1,
+            .name = info.@"struct".fields[i].name,
+            .type = info.@"struct".fields[i].type,
+            .default_value_ptr = info.@"struct".fields[i].default_value_ptr,
+            .is_comptime = info.@"struct".fields[i].is_comptime,
+        };
+    }
+
+    return @Type(.{ .@"struct" = .{
+        .is_tuple = info.@"struct".is_tuple,
+        .layout = .@"extern",
+        .fields = &fields,
+        .decls = &.{},
+    } });
+}
 
 const t = std.testing;
 test "load bmp file from memory" {
@@ -75,6 +104,7 @@ test "load bmp file from memory" {
 
     try t.expectEqual(762, bmp.width);
     try t.expectEqual(1309, bmp.height);
+    try t.expectEqual(2992374, bmp.pixels.len);
     try t.expectEqual(0xFF, bmp.pixels[0]); // B
     try t.expectEqual(0xFF, bmp.pixels[1]); // G
     try t.expectEqual(0xFF, bmp.pixels[2]); // R
