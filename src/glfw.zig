@@ -1,0 +1,43 @@
+const std = @import("std");
+
+pub const c = @cImport({
+    @cDefine("GLFW_INCLUDE_NONE", "1");
+    @cDefine("GLFW_INCLUDE_VULKAN", "1");
+    @cInclude("GLFW/glfw3.h");
+});
+
+pub fn init() !void {
+    if (c.glfwInit() == 0) {
+        return error.GlfwInitFailed;
+    }
+}
+
+pub fn terminate() void {
+    c.glfwTerminate();
+}
+
+pub fn createWindow(width: i32, height: i32, title: [:0]const u8) !*c.GLFWwindow {
+    c.glfwWindowHint(c.GLFW_CLIENT_API, c.GLFW_NO_API);
+    c.glfwWindowHint(c.GLFW_RESIZABLE, c.GLFW_FALSE);
+
+    std.debug.print("Creating window with size={}x{} and title={s}\n", .{ width, height, title });
+    return c.glfwCreateWindow(width, height, title.ptr, null, null) orelse error.GlfwCreateWindowFailed;
+}
+
+pub fn destroyWindow(window: *c.GLFWwindow) void {
+    c.glfwDestroyWindow(window);
+}
+
+pub fn windowShouldClose(window: *c.GLFWwindow) bool {
+    return c.glfwWindowShouldClose(window) != 0;
+}
+
+pub fn pollEvents() void {
+    c.glfwPollEvents();
+}
+
+pub fn getRequiredInstanceExtensions() [][*:0]const u8 {
+    var glfwExtensionCount: u32 = 0;
+    const glfwExtensions = c.glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+    return @ptrCast(glfwExtensions[0..glfwExtensionCount]);
+}
