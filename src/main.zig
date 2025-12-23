@@ -1,6 +1,7 @@
 const std = @import("std");
-const glfw = @import("glfw");
-const vk = @import("vulkan");
+
+const glfw = @import("glfw.zig");
+const vk = @import("vulkan.zig");
 
 const shader_vert = @embedFile("shader.vert.spv");
 const shader_frag = @embedFile("shader.frag.spv");

@@ -1,73 +1,44 @@
 const std = @import("std");
-
-fn createGLFW(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *std.Build.Module {
-    const glfw = b.addModule("glfw", .{
-        .root_source_file = b.path("src/glfw.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const glfw_dep = b.dependency("glfw_zig", .{
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const glfw_lib = glfw_dep.artifact("glfw");
-    for (glfw_lib.root_module.include_dirs.items) |*included| {
-        switch (included.*) {
-            .path => glfw.addIncludePath(included.path),
-            else => {},
-        }
-    }
-
-    glfw.linkLibrary(glfw_lib);
-
-    glfw.addCMacro("GLFW_INCLUDE_NONE", "1");
-    glfw.addCMacro("GLFW_INCLUDE_VULKAN", "1");
-
-    return glfw;
-}
-
-fn createVulkan(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) !*std.Build.Module {
-    const vulkan = b.addModule("vulkan", .{
-        .root_source_file = b.path("src/vulkan.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    if (builtin.os.tag == .windows) {
-        const vulkan_sdk_path = b.option([]const u8, "vulkan-sdk-path", "Path to Vulkan SDK");
-        if (vulkan_sdk_path == null) {
-            std.debug.print("Missing required option -Dvulkan-sdk-path", .{});
-            return error.MissingVulkanSDKPath;
-        }
-        vulkan.addIncludePath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/Include", .{vulkan_sdk_path.?}) });
-    }
-
-    vulkan.linkSystemLibrary("vulkan", .{});
-
-    return vulkan;
-}
-
 const builtin = @import("builtin");
 
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const glfw = createGLFW(b, target, optimize);
-    const vulkan = try createVulkan(b, target, optimize);
     const exe = b.addExecutable(.{
         .name = "vulkan_tutorial",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
-            .imports = &.{
-                .{ .name = "glfw", .module = glfw },
-                .{ .name = "vulkan", .module = vulkan },
-            },
         }),
     });
+
+    // GLFW
+    const glfw_dep = b.dependency("glfw_zig", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const glfw_lib = glfw_dep.artifact("glfw");
+    for (glfw_lib.root_module.include_dirs.items) |*included| {
+        switch (included.*) {
+            .path => exe.addIncludePath(included.path),
+            else => {},
+        }
+    }
+    exe.linkLibrary(glfw_lib);
+    exe.root_module.addCMacro("GLFW_INCLUDE_NONE", "1");
+    exe.root_module.addCMacro("GLFW_INCLUDE_VULKAN", "1");
+
+    // Vulkan
+    if (builtin.os.tag == .windows) {
+        const vulkan_sdk_path = b.option([]const u8, "vulkan-sdk-path", "Path to Vulkan SDK");
+        if (vulkan_sdk_path == null) {
+            std.debug.print("Missing required option -Dvulkan-sdk-path", .{});
+            return error.MissingVulkanSDKPath;
+        }
+        exe.addIncludePath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/Include", .{vulkan_sdk_path.?}) });
+    }
+    exe.linkSystemLibrary("vulkan");
 
     b.installArtifact(exe);
 
@@ -96,17 +67,11 @@ pub fn build(b: *std.Build) !void {
         run_cmd.addArgs(args);
     }
 
-    const mod_tests = b.addTest(.{
-        .root_module = glfw,
-    });
-    const run_mod_tests = b.addRunArtifact(mod_tests);
-
     const exe_tests = b.addTest(.{
         .root_module = exe.root_module,
     });
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
     const test_step = b.step("test", "Run tests");
-    test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
 }
