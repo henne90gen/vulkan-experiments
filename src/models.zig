@@ -18,7 +18,7 @@ const Face = struct {
     }
 };
 
-const Vertex = struct {
+pub const Vertex = struct {
     position: [4]f32,
     texture_coordinate: [3]f32,
     normal: [3]f32,
@@ -160,8 +160,8 @@ pub const Model = struct {
                 const vertex = self.vertices[@intCast(v_idx)];
                 const tc_idx = face.texture_coordinates[idx];
                 const texture_coordinate = self.texture_coordinates[@intCast(tc_idx)];
-                const n_idx = face.texture_coordinates[idx];
-                const normal = self.texture_coordinates[@intCast(n_idx)];
+                const n_idx = face.normals[idx];
+                const normal = self.normals[@intCast(n_idx)];
                 try interleaved.append(gpa, .{
                     .position = vertex,
                     .texture_coordinate = texture_coordinate,
