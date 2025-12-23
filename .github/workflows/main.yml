@@ -10,23 +10,16 @@ jobs:
     name: Build and Test
     steps:
       - uses: actions/checkout@v3
+
       - name: Install zig compiler
         uses: mlugg/setup-zig@v2
         with:
           version: 0.15.2
-      - name: Install Vulkan SDK
-        uses: humbletim/install-vulkan-sdk@v1.2
-        with:
-          version: 1.4.328.1
-          cache: true
 
       - name: Install Vulkan SDK
         uses: jakoch/install-vulkan-sdk-action@v1
         with:
-          # You can set the Vulkan SDK version to download.
-          # Defaults to latest version, if version not set.
           vulkan_version: 1.4.328.1
-          # optional_components: com.lunarg.vulkan.vma
           install_runtime: true
           cache: true
           stripdown: true
@@ -34,9 +27,7 @@ jobs:
       - if: startsWith(matrix.os, 'linux')
         run: zig build -Dvulkan-sdk-path="$VULKAN_SDK"
       - if: startsWith(matrix.os, 'windows')
-        run: |
-          tree /f "$env:VULKAN_SDK"
-          zig build -Dvulkan-sdk-path="$env:VULKAN_SDK"
+        run: zig build -Dvulkan-sdk-path="$env:VULKAN_SDK"
 
       - if: startsWith(matrix.os, 'linux')
         run: zig build -Dvulkan-sdk-path="$VULKAN_SDK" test
