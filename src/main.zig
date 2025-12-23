@@ -5,10 +5,7 @@ const glfw = @import("glfw.zig");
 const vk = @import("vulkan.zig");
 const bmp = @import("bitmap.zig");
 const utils = @import("utils.zig");
-
-const shader_vert = @embedFile("shader.vert.spv");
-const shader_frag = @embedFile("shader.frag.spv");
-const greenland_grid_velo = @embedFile("assets/greenland_grid_velo.bmp");
+const rd = @import("renderer.zig");
 
 test {
     std.testing.refAllDeclsRecursive(@This());
@@ -17,34 +14,12 @@ test {
 const MAX_FRAMES_IN_FLIGHT = 2;
 const INITIAL_GEOMETRY_INSTANCE_COUNT = 1;
 
-const PerFrameVulkanData = struct {
-    command_buffer: vk.c.VkCommandBuffer,
-    sync_objects: vk.SyncObjects,
-    uniform_buffer: vk.c.VkBuffer = undefined,
-    uniform_buffer_memory: vk.c.VkDeviceMemory = undefined,
-    uniform_buffer_mapped: *void = undefined,
-    descriptor_set: vk.c.VkDescriptorSet = undefined,
-};
-
-const UniformBufferObject = extern struct {
-    aspect_ratio: f32 align(4),
-};
-
-const Vertex = struct {
-    position: [2]f32 align(8),
-};
-
-const GeometryInstance = struct {
-    geometry_type: f32 align(4),
-    rotation: f32 align(4),
-    translation: [2]f32 align(8),
-    scale: [2]f32 align(8),
-};
-
 const WindowState = struct {
     allocator: std.mem.Allocator,
+    geometry_instances: std.ArrayList(rd.GeometryInstance),
+    zoom: f32,
+
     rotation: f32,
-    geometry_instances: std.ArrayList(GeometryInstance),
 
     pub fn deinit(self: *WindowState) void {
         self.geometry_instances.deinit(self.allocator);
@@ -70,96 +45,44 @@ pub fn main() !void {
 
     var window_state = WindowState{
         .allocator = allocator,
+        .geometry_instances = std.ArrayList(rd.GeometryInstance).empty,
+        .zoom = 1.0,
         .rotation = 0.0,
-        .geometry_instances = std.ArrayList(GeometryInstance).empty,
     };
     defer window_state.deinit();
 
     glfw.setWindowUserPointer(window, &window_state);
     glfw.setKeyCallback(window, keyCallback);
+    glfw.setMouseButtonCallback(window, mouseButtonCallback);
+    glfw.setScrollCallback(window, scrollCallback);
 
-    const requiredExtensions = glfw.getRequiredInstanceExtensions();
-    const instance = try vk.createInstance(allocator, requiredExtensions);
-    defer vk.destroyInstance(instance);
+    var renderer = rd.Renderer.init(allocator, window);
+    defer renderer.deinit();
 
-    const debug_messenger = try vk.setupDebugMessenger(instance);
-    defer vk.destroyDebugMessenger(instance, debug_messenger);
-
-    const surface = createWindowSurface(instance, window);
-    defer vk.destroySurface(instance, surface);
-
-    const device = try vk.Device.init(allocator, instance, surface);
-    defer device.deinit();
-
-    var width: i32 = 0;
-    var height: i32 = 0;
-    glfw.getFramebufferSize(window, &width, &height);
-    var swap_chain = try vk.SwapChain.init(allocator, &device, surface, .{ .width = @intCast(width), .height = @intCast(height) });
-    defer swap_chain.deinit(allocator, &device);
-
-    std.debug.print("Swap chain images count: {}\n", .{swap_chain.images.len});
-
-    var image_views = try vk.createImageViews(allocator, &device, &swap_chain);
-    defer vk.destroyImageViews(allocator, &device, image_views);
-
-    std.debug.print("Image views count: {}\n", .{image_views.len});
-
-    const bitmap = try bmp.Bitmap.from_memory(allocator, greenland_grid_velo);
-    defer bitmap.deinit(allocator);
-
-    const descriptor_set_layout = try vk.createDescriptorSetLayout(&device);
-    defer vk.destroyDescriptorSetLayout(&device, descriptor_set_layout);
-
-    const vertex_desription = vertexDescription();
-    const pipeline = try vk.createGraphicsPipeline(allocator, &device, &swap_chain, shader_vert, shader_frag, descriptor_set_layout, vertex_desription);
-    defer pipeline.deinit(&device);
-
-    var depth_image = try vk.createDepthResources(&device, .{ .width = @intCast(width), .height = @intCast(height) });
-    defer depth_image.deinit(&device);
-
-    var framebuffers = try vk.createFramebuffers(allocator, &device, &pipeline, &swap_chain, image_views, &depth_image);
-    defer vk.destroyFramebuffers(allocator, &device, framebuffers);
-
-    const command_pool = try vk.createCommandPool(allocator, surface, &device);
-    defer vk.destroyCommandPool(&device, command_pool);
-
-    const texture_image = try vk.createTextureImage(&device, command_pool, bitmap.pixels, bitmap.width, bitmap.height, bitmap.bytes_per_pixel);
-    defer texture_image.deinit(&device);
-
-    const texture_sampler = try vk.createTextureSampler(&device);
-    defer vk.destroyTextureSampler(&device, texture_sampler);
-
-    const rectangle_vertex_data = [_]Vertex{
-        .{ .position = .{ 0.5, -0.5 } },
-        .{ .position = .{ 0.5, 0.5 } },
-        .{ .position = .{ -0.5, 0.5 } },
-        .{ .position = .{ 0.5, -0.5 } },
-        .{ .position = .{ -0.5, 0.5 } },
-        .{ .position = .{ -0.5, -0.5 } },
-
-        .{ .position = .{ 0.5, -0.5 } },
-        .{ .position = .{ -0.5, 0.5 } },
-        .{ .position = .{ 0.5, 0.5 } },
-        .{ .position = .{ 0.5, -0.5 } },
-        .{ .position = .{ -0.5, -0.5 } },
-        .{ .position = .{ -0.5, 0.5 } },
+    const rectangle_vertex_data = [_]rd.Vertex{
+        .{ .position = .{ 0.5, -0.5, 0.0 } },
+        .{ .position = .{ -0.5, 0.5, 0.0 } },
+        .{ .position = .{ 0.5, 0.5, 0.0 } },
+        .{ .position = .{ 0.5, -0.5, 0.0 } },
+        .{ .position = .{ -0.5, -0.5, 0.0 } },
+        .{ .position = .{ -0.5, 0.5, 0.0 } },
     };
     const rectangle_buffer_size = @sizeOf(@TypeOf(rectangle_vertex_data[0])) * rectangle_vertex_data.len;
-    const rectangle_vertex_buffer = try vk.createBuffer(&device, vk.c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, rectangle_buffer_size);
-    defer vk.destroyBuffer(&device, rectangle_vertex_buffer);
+    const rectangle_vertex_buffer = try vk.createBuffer(&renderer.device, vk.c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, rectangle_buffer_size);
+    defer vk.destroyBuffer(&renderer.device, rectangle_vertex_buffer);
 
-    const rectangle_vertex_buffer_memory = try vk.createBufferMemory(&device, rectangle_vertex_buffer, vk.c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    defer vk.destroyBufferMemory(&device, rectangle_vertex_buffer_memory);
+    const rectangle_vertex_buffer_memory = try vk.createBufferMemory(&renderer.device, rectangle_vertex_buffer, vk.c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    defer vk.destroyBufferMemory(&renderer.device, rectangle_vertex_buffer_memory);
 
-    try vk.mapMemory(&device, rectangle_vertex_buffer_memory, @ptrCast(&rectangle_vertex_data));
+    try vk.mapMemory(&renderer.device, rectangle_vertex_buffer_memory, @ptrCast(&rectangle_vertex_data));
 
     var current_geometry_instance_count: usize = INITIAL_GEOMETRY_INSTANCE_COUNT;
-    var instance_buffer_size = @sizeOf(GeometryInstance) * current_geometry_instance_count;
-    var instance_buffer = try vk.createBuffer(&device, vk.c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, instance_buffer_size);
-    defer vk.destroyBuffer(&device, instance_buffer);
+    var instance_buffer_size = @sizeOf(rd.GeometryInstance) * current_geometry_instance_count;
+    var instance_buffer = try vk.createBuffer(&renderer.device, vk.c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, instance_buffer_size);
+    defer vk.destroyBuffer(&renderer.device, instance_buffer);
 
-    var instance_buffer_memory = try vk.createBufferMemory(&device, instance_buffer, vk.c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    defer vk.destroyBufferMemory(&device, instance_buffer_memory);
+    var instance_buffer_memory = try vk.createBufferMemory(&renderer.device, instance_buffer, vk.c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    defer vk.destroyBufferMemory(&renderer.device, instance_buffer_memory);
 
     const descriptor_pool = try vk.createDescriptorPool(&device, MAX_FRAMES_IN_FLIGHT);
     defer vk.destroyDescriptorPool(&device, descriptor_pool);
@@ -167,7 +90,7 @@ pub fn main() !void {
     const descriptor_sets = try vk.createDescriptorSets(allocator, &device, descriptor_pool, descriptor_set_layout, MAX_FRAMES_IN_FLIGHT);
     defer vk.destroyDescriptorSets(allocator, descriptor_sets);
 
-    var per_frame_vk_data = [_]PerFrameVulkanData{undefined} ** MAX_FRAMES_IN_FLIGHT;
+    var per_frame_vk_data = [_]rd.PerFrameVulkanData{undefined} ** MAX_FRAMES_IN_FLIGHT;
     defer {
         for (per_frame_vk_data) |data| {
             vk.destroyCommandBuffer(&device, command_pool, data.command_buffer);
@@ -183,7 +106,7 @@ pub fn main() !void {
         data.command_buffer = try vk.createCommandBuffer(&device, command_pool);
         data.sync_objects = try vk.createSyncObjects(&device);
 
-        const ubo_size = @sizeOf(UniformBufferObject);
+        const ubo_size = @sizeOf(rd.UniformBufferObject);
         data.uniform_buffer = try vk.createBuffer(&device, vk.c.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, ubo_size);
         data.uniform_buffer_memory = try vk.createBufferMemory(&device, data.uniform_buffer, vk.c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         const err = vk.c.vkMapMemory(device.device, data.uniform_buffer_memory, 0, ubo_size, 0, @ptrCast(&data.uniform_buffer_mapped));
@@ -195,7 +118,7 @@ pub fn main() !void {
         const buffer_info = vk.c.VkDescriptorBufferInfo{
             .buffer = data.uniform_buffer,
             .offset = 0,
-            .range = @sizeOf(UniformBufferObject), // could also be VK_WHOLE_SIZE
+            .range = @sizeOf(rd.UniformBufferObject), // could also be VK_WHOLE_SIZE
         };
 
         const image_info = vk.c.VkDescriptorImageInfo{
@@ -243,14 +166,13 @@ pub fn main() !void {
         glfw.pollEvents();
         const start = std.time.nanoTimestamp();
 
-        var new_width: i32 = 0;
-        var new_height: i32 = 0;
-        glfw.getFramebufferSize(window, &new_width, &new_height);
+        const new_framebuffer_size = glfw.getFramebufferSize(window);
 
         window_state.rotation += 0.01;
 
-        const ubo = UniformBufferObject{
-            .aspect_ratio = @as(f32, @floatFromInt(new_width)) / @as(f32, @floatFromInt(new_height)),
+        const ubo = rd.UniformBufferObject{
+            .aspect_ratio = @as(f32, @floatFromInt(new_framebuffer_size.width)) / @as(f32, @floatFromInt(new_framebuffer_size.height)),
+            .zoom = window_state.zoom,
         };
 
         for (window_state.geometry_instances.items) |*geometry_instance| {
@@ -263,14 +185,14 @@ pub fn main() !void {
             current_geometry_instance_count = window_state.geometry_instances.items.len;
             vk.destroyBufferMemory(&device, instance_buffer_memory);
             vk.destroyBuffer(&device, instance_buffer);
-            instance_buffer_size = window_state.geometry_instances.items.len * @sizeOf(GeometryInstance);
+            instance_buffer_size = window_state.geometry_instances.items.len * @sizeOf(rd.GeometryInstance);
             instance_buffer = try vk.createBuffer(&device, vk.c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, instance_buffer_size);
             instance_buffer_memory = try vk.createBufferMemory(&device, instance_buffer, vk.c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         }
         try vk.mapMemory(&device, instance_buffer_memory, @ptrCast(window_state.geometry_instances.items));
 
         const vk_data = per_frame_vk_data[current_frame];
-        const should_recreate_swap_chain = try drawFrame(
+        const should_recreate_swap_chain = try rd.drawFrame(
             &device,
             &swap_chain,
             &pipeline,
@@ -292,7 +214,7 @@ pub fn main() !void {
                 image_views,
                 &depth_image,
                 framebuffers,
-                .{ .width = @intCast(new_width), .height = @intCast(new_height) },
+                .{ .width = @intCast(new_framebuffer_size.width), .height = @intCast(new_framebuffer_size.height) },
             );
             swap_chain = result.swap_chain;
             image_views = result.image_views;
@@ -305,9 +227,9 @@ pub fn main() !void {
         const end = std.time.nanoTimestamp();
         const frame_time_ns = end - start;
         const frame_time_ms = @as(f32, @floatFromInt(frame_time_ns)) / 1_000_000.0;
-        if (false) {
-            std.debug.print("Frame time: {d:.2} ms - {d} fps\n", .{ frame_time_ms, 1000.0 / frame_time_ms });
-        }
+        const new_title = try std.fmt.allocPrintSentinel(allocator, "Vulkan - Frame time: {d:.2} ms - {d:.2} fps", .{ frame_time_ms, 1000.0 / frame_time_ms }, 0);
+        defer allocator.free(new_title);
+        glfw.setWindowTitle(window, new_title);
 
         const target_frame_time_ns: u64 = 16 * 1_000_000;
         if (frame_time_ns < target_frame_time_ns) {
@@ -355,233 +277,63 @@ export fn keyCallback(window: ?*glfw.c.GLFWwindow, key: i32, scancode: i32, acti
     }
 }
 
-fn createWindowSurface(instance: vk.c.VkInstance, window: *glfw.c.GLFWwindow) vk.c.VkSurfaceKHR {
-    var surface: vk.c.VkSurfaceKHR = undefined;
-    if (glfw.c.glfwCreateWindowSurface(@ptrCast(instance), window, null, &surface) != vk.c.VK_SUCCESS) {
-        return null;
+export fn mouseButtonCallback(window: ?*glfw.c.GLFWwindow, button: i32, action: i32, mods: i32) void {
+    _ = mods;
+    if (window == null) {
+        return;
     }
-    return surface;
+
+    var window_state = glfw.getWindowUserPointer(window.?, WindowState);
+    if (window_state == null) {
+        return;
+    }
+
+    if (button == glfw.c.GLFW_MOUSE_BUTTON_RIGHT and action == glfw.c.GLFW_PRESS) {
+        const mousePosition = glfw.getMousePosition(window.?);
+        const scaled = mapMousePositionToObjectSpace(window.?, window_state.?, mousePosition);
+        window_state.?.geometry_instances.append(window_state.?.allocator, .{
+            .geometry_type = 1,
+            .rotation = window_state.?.rotation,
+            .translation = [2]f32{ @floatCast(scaled[0]), @floatCast(scaled[1]) },
+            .scale = [2]f32{ 1.0, 1.0 },
+        }) catch {
+            std.debug.print("Failed to append geometry instance\n", .{});
+        };
+        std.debug.print("Geometry instance appended: {} rotation={}\n", .{ window_state.?.geometry_instances.items.len, window_state.?.rotation });
+    }
 }
 
-fn vertexDescription() vk.VertexDescription {
-    const vertex_stride = @sizeOf(Vertex);
-    const instance_stride = @sizeOf(GeometryInstance);
-    return .{
-        .binding_descriptions = &[_]vk.c.VkVertexInputBindingDescription{
-            .{
-                .binding = 0,
-                .stride = vertex_stride,
-                .inputRate = vk.c.VK_VERTEX_INPUT_RATE_VERTEX,
-            },
-            .{
-                .binding = 1,
-                .stride = instance_stride,
-                .inputRate = vk.c.VK_VERTEX_INPUT_RATE_INSTANCE,
-            },
-        },
-        .attribute_descriptions = &[_]vk.c.VkVertexInputAttributeDescription{
-            .{
-                .binding = 0,
-                .location = 0,
-                .format = vk.c.VK_FORMAT_R32G32B32A32_SFLOAT,
-                .offset = @offsetOf(Vertex, "position"),
-            },
-            .{
-                .binding = 1,
-                .location = 1,
-                .format = vk.c.VK_FORMAT_R32_SFLOAT,
-                .offset = @offsetOf(GeometryInstance, "geometry_type"),
-            },
-            .{
-                .binding = 1,
-                .location = 2,
-                .format = vk.c.VK_FORMAT_R32_SFLOAT,
-                .offset = @offsetOf(GeometryInstance, "rotation"),
-            },
-            .{
-                .binding = 1,
-                .location = 3,
-                .format = vk.c.VK_FORMAT_R32G32_SFLOAT,
-                .offset = @offsetOf(GeometryInstance, "translation"),
-            },
-            .{
-                .binding = 1,
-                .location = 4,
-                .format = vk.c.VK_FORMAT_R32G32_SFLOAT,
-                .offset = @offsetOf(GeometryInstance, "scale"),
-            },
-        },
-    };
+fn mapMousePositionToObjectSpace(window: *glfw.c.GLFWwindow, window_state: *WindowState, mousePosition: glfw.MousePosition) [2]f32 {
+    const framebuffer_size = glfw.getFramebufferSize(window);
+    const aspect_ratio = @as(f64, @floatFromInt(framebuffer_size.width)) / @as(f64, @floatFromInt(framebuffer_size.height));
+    var scaled_x = (mousePosition.x / @as(f64, @floatFromInt(framebuffer_size.width))) * 2.0 - 1.0;
+    var scaled_y = -((mousePosition.y / @as(f64, @floatFromInt(framebuffer_size.height))) * 2.0 - 1.0);
+
+    scaled_x /= @as(f64, window_state.zoom);
+    scaled_y /= @as(f64, window_state.zoom);
+
+    if (aspect_ratio > 1.0) {
+        scaled_x *= aspect_ratio;
+    } else {
+        scaled_y /= aspect_ratio;
+    }
+    return [2]f32{ @floatCast(scaled_x), @floatCast(scaled_y) };
 }
 
-fn drawFrame(
-    device: *const vk.Device,
-    swap_chain: *const vk.SwapChain,
-    pipeline: *const vk.Pipeline,
-    framebuffers: []vk.c.VkFramebuffer,
-    vk_data: *const PerFrameVulkanData,
-    ubo: *const UniformBufferObject,
-    vertex_buffer: vk.c.VkBuffer,
-    vertex_count: usize,
-    instance_buffer: vk.c.VkBuffer,
-    instance_count: usize,
-) !bool {
-    var err = vk.c.vkWaitForFences(device.device, 1, &vk_data.sync_objects.in_flight_fence, vk.c.VK_TRUE, vk.c.UINT64_MAX);
-    if (err != vk.c.VK_SUCCESS) {
-        std.debug.print("Failed to wait for in-flight fence: {s}\n", .{vk.c.string_VkResult(err)});
-        return false;
+export fn scrollCallback(window: ?*glfw.c.GLFWwindow, xoffset: f64, yoffset: f64) void {
+    _ = xoffset;
+    if (window == null) {
+        return;
     }
 
-    err = vk.c.vkResetFences(device.device, 1, &vk_data.sync_objects.in_flight_fence);
-    if (err != vk.c.VK_SUCCESS) {
-        std.debug.print("Failed to reset in-flight fence: {s}\n", .{vk.c.string_VkResult(err)});
-        return false;
+    var window_state = glfw.getWindowUserPointer(window.?, WindowState);
+    if (window_state == null) {
+        return;
     }
 
-    var image_index: u32 = 0;
-    err = vk.c.vkAcquireNextImageKHR(device.device, swap_chain.swap_chain, vk.c.UINT64_MAX, vk_data.sync_objects.image_available_semaphore, @ptrCast(vk.c.VK_NULL_HANDLE), &image_index);
-    if (err == vk.c.VK_ERROR_OUT_OF_DATE_KHR) {
-        return true;
-    } else if (err != vk.c.VK_SUCCESS and err != vk.c.VK_SUBOPTIMAL_KHR) {
-        std.debug.print("Failed to acquire swap chain image: {s}\n", .{vk.c.string_VkResult(err)});
-        return error.AcquiringSwapChainImageFailed;
+    window_state.?.zoom *= @floatCast(1.0 + yoffset * 0.1);
+    if (window_state.?.zoom < 0.01) {
+        window_state.?.zoom = 0.01;
     }
-
-    err = vk.c.vkResetCommandBuffer(vk_data.command_buffer, 0);
-    if (err != vk.c.VK_SUCCESS) {
-        std.debug.print("Failed to reset command buffer: {s}\n", .{vk.c.string_VkResult(err)});
-        return error.ResettingCommandBufferFailed;
-    }
-
-    try recordCommandBuffer(
-        swap_chain,
-        pipeline,
-        framebuffers[image_index],
-        vk_data.command_buffer,
-        vk_data.descriptor_set,
-        vertex_buffer,
-        vertex_count,
-        instance_buffer,
-        instance_count,
-    );
-
-    const buf: *UniformBufferObject = @ptrCast(@alignCast(vk_data.uniform_buffer_mapped));
-    buf.* = ubo.*;
-
-    const wait_semaphores = [_]vk.c.VkSemaphore{vk_data.sync_objects.image_available_semaphore};
-    const wait_stages = [_]vk.c.VkPipelineStageFlags{vk.c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-    const signal_semaphores = [_]vk.c.VkSemaphore{vk_data.sync_objects.render_finished_semaphore};
-    const submit_info = vk.c.VkSubmitInfo{
-        .sType = vk.c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &wait_semaphores[0],
-        .pWaitDstStageMask = &wait_stages[0],
-        .commandBufferCount = 1,
-        .pCommandBuffers = &vk_data.command_buffer,
-        .signalSemaphoreCount = 1,
-        .pSignalSemaphores = &signal_semaphores[0],
-    };
-
-    err = vk.c.vkQueueSubmit(device.graphics_queue, 1, &submit_info, vk_data.sync_objects.in_flight_fence);
-    if (err != vk.c.VK_SUCCESS) {
-        std.debug.print("Failed to submit draw command buffer: {s}\n", .{vk.c.string_VkResult(err)});
-        return error.SubmittingDrawCommandBufferFailed;
-    }
-
-    const swap_chains = [_]vk.c.VkSwapchainKHR{swap_chain.swap_chain};
-    const present_info = vk.c.VkPresentInfoKHR{
-        .sType = vk.c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-        .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &signal_semaphores[0],
-        .swapchainCount = 1,
-        .pSwapchains = &swap_chains[0],
-        .pImageIndices = &image_index,
-        .pResults = null,
-    };
-
-    err = vk.c.vkQueuePresentKHR(device.present_queue, &present_info);
-    if (err == vk.c.VK_ERROR_OUT_OF_DATE_KHR or err == vk.c.VK_SUBOPTIMAL_KHR) {
-        return true;
-    } else if (err != vk.c.VK_SUCCESS) {
-        std.debug.print("Failed to present swap chain image: {s}\n", .{vk.c.string_VkResult(err)});
-        return error.PresentingSwapChainImageFailed;
-    }
-
-    return false;
-}
-
-pub fn recordCommandBuffer(
-    swap_chain: *const vk.SwapChain,
-    graphics_pipeline: *const vk.Pipeline,
-    framebuffer: vk.c.VkFramebuffer,
-    command_buffer: vk.c.VkCommandBuffer,
-    descriptor_set: vk.c.VkDescriptorSet,
-    vertex_buffer: vk.c.VkBuffer,
-    vertex_count: usize,
-    instance_buffer: vk.c.VkBuffer,
-    instance_count: usize,
-) !void {
-    const begin_info = vk.c.VkCommandBufferBeginInfo{
-        .sType = vk.c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-        .flags = 0,
-        .pInheritanceInfo = null,
-    };
-
-    var err = vk.c.vkBeginCommandBuffer(command_buffer, &begin_info);
-    if (err != vk.c.VK_SUCCESS) {
-        std.debug.print("Failed to begin recording command buffer: {s}\n", .{vk.c.string_VkResult(err)});
-        return error.VulkanCommandBufferRecordingFailed;
-    }
-
-    const clear_values = [_]vk.c.VkClearValue{
-        .{ .color = .{ .float32 = .{ 0.0, 0.0, 0.0, 1.0 } } },
-        .{ .depthStencil = .{ .depth = 1.0, .stencil = 0.0 } },
-    };
-    const render_pass_info = vk.c.VkRenderPassBeginInfo{
-        .sType = vk.c.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-        .renderPass = graphics_pipeline.render_pass,
-        .framebuffer = framebuffer,
-        .renderArea = .{
-            .offset = .{ .x = 0, .y = 0 },
-            .extent = swap_chain.extent,
-        },
-        .clearValueCount = clear_values.len,
-        .pClearValues = &clear_values[0],
-    };
-
-    vk.c.vkCmdBeginRenderPass(command_buffer, &render_pass_info, vk.c.VK_SUBPASS_CONTENTS_INLINE);
-
-    vk.c.vkCmdBindPipeline(command_buffer, vk.c.VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline.pipeline);
-
-    const viewport = vk.c.VkViewport{
-        .x = 0.0,
-        .y = 0.0,
-        .width = @floatFromInt(swap_chain.extent.width),
-        .height = @floatFromInt(swap_chain.extent.height),
-        .minDepth = 0.0,
-        .maxDepth = 1.0,
-    };
-    vk.c.vkCmdSetViewport(command_buffer, 0, 1, &viewport);
-
-    const scissor = vk.c.VkRect2D{
-        .offset = .{ .x = 0, .y = 0 },
-        .extent = swap_chain.extent,
-    };
-    vk.c.vkCmdSetScissor(command_buffer, 0, 1, &scissor);
-
-    vk.c.vkCmdBindDescriptorSets(command_buffer, vk.c.VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline.pipeline_layout, 0, 1, &descriptor_set, 0, null);
-
-    const offsets = [_]vk.c.VkDeviceSize{ 0, 0 };
-    const vk_vertex_buffers = [_]vk.c.VkBuffer{ vertex_buffer, instance_buffer };
-    vk.c.vkCmdBindVertexBuffers(command_buffer, 0, vk_vertex_buffers.len, &vk_vertex_buffers, &offsets);
-
-    vk.c.vkCmdDraw(command_buffer, @intCast(vertex_count), @intCast(instance_count), 0, 0);
-
-    vk.c.vkCmdEndRenderPass(command_buffer);
-
-    err = vk.c.vkEndCommandBuffer(command_buffer);
-    if (err != vk.c.VK_SUCCESS) {
-        std.debug.print("Failed to end command buffer: {s}\n", .{vk.c.string_VkResult(err)});
-        return error.VulkanCommandBufferRecordingFailed;
-    }
+    std.debug.print("Zoom: {d}\n", .{window_state.?.zoom});
 }

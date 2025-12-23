@@ -2,9 +2,10 @@
 
 layout(binding = 0) uniform UniformBufferObject {
     float aspect_ratio;
+    float zoom;
 } ubo;
 
-layout(location = 0) in vec2 position;
+layout(location = 0) in vec3 position;
 layout(location = 1) in float geometry_type;
 layout(location = 2) in float rotation;
 layout(location = 3) in vec2 translation;
@@ -18,6 +19,8 @@ void main() {
             position.x * sin(rotation) + position.y * cos(rotation)
         );
     vec2 transformed_position = vec2(rotated_position * scale + translation);
+    transformed_position.y = -transformed_position.y;
+    transformed_position *= ubo.zoom;
     if (ubo.aspect_ratio > 1.0) {
         gl_Position = vec4(transformed_position.x / ubo.aspect_ratio, transformed_position.y, 0.0, 1.0);
     } else {

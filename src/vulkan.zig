@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 
 pub const c = @cImport({
     @cInclude("vulkan/vulkan.h");
-    @cInclude("vulkan/vk_enum_string_helper.h");
+    @cInclude("vk_enum_string_helper_custom.h");
 });
 
 const is_debug_build = switch (builtin.mode) {

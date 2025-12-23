@@ -12,6 +12,7 @@ pub fn build(b: *std.Build) !void {
             .optimize = optimize,
         }),
     });
+    exe.root_module.addIncludePath(b.path("src"));
 
     // GLFW
     const glfw_dep = b.dependency("glfw_zig", .{
