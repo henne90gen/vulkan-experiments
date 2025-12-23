@@ -36,14 +36,8 @@ pub fn build(b: *std.Build) !void {
         return error.MissingVulkanSDKPath;
     }
     if (vulkan_sdk_path != null) {
-        var include_str = "include";
-        var lib_str = "lib";
-        if (builtin.os.tag == .windows) {
-            include_str = "Include";
-            lib_str = "Lib";
-        }
-        exe.root_module.addIncludePath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/{s}", .{ vulkan_sdk_path.?, include_str }) });
-        exe.root_module.addLibraryPath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/{s}", .{ vulkan_sdk_path.?, lib_str }) });
+        exe.root_module.addIncludePath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/include", .{vulkan_sdk_path.?}) });
+        exe.root_module.addLibraryPath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/lib", .{vulkan_sdk_path.?}) });
     }
     exe.root_module.linkSystemLibrary("vulkan", .{});
 
