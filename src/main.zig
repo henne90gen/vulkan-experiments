@@ -112,19 +112,19 @@ fn drawFrame(device: *const vk.Device, sync_objects: *const vk.SyncObjects, swap
 
     try vk.recordCommandBuffer(swap_chain, pipeline, framebuffers, command_buffer, image_index);
 
-    var submit_info = vk.c.VkSubmitInfo{};
-    submit_info.sType = vk.c.VK_STRUCTURE_TYPE_SUBMIT_INFO;
-
     const wait_semaphores = [_]vk.c.VkSemaphore{sync_objects.image_available_semaphore};
     const wait_stages = [_]vk.c.VkPipelineStageFlags{vk.c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-    submit_info.waitSemaphoreCount = 1;
-    submit_info.pWaitSemaphores = &wait_semaphores[0];
-    submit_info.pWaitDstStageMask = &wait_stages[0];
-    submit_info.commandBufferCount = 1;
-    submit_info.pCommandBuffers = &command_buffer;
     const signal_semaphores = [_]vk.c.VkSemaphore{sync_objects.render_finished_semaphore};
-    submit_info.signalSemaphoreCount = 1;
-    submit_info.pSignalSemaphores = &signal_semaphores[0];
+    const submit_info = vk.c.VkSubmitInfo{
+        .sType = vk.c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &wait_semaphores[0],
+        .pWaitDstStageMask = &wait_stages[0],
+        .commandBufferCount = 1,
+        .pCommandBuffers = &command_buffer,
+        .signalSemaphoreCount = 1,
+        .pSignalSemaphores = &signal_semaphores[0],
+    };
 
     err = vk.c.vkQueueSubmit(device.graphics_queue, 1, &submit_info, sync_objects.in_flight_fence);
     if (err != vk.c.VK_SUCCESS) {
@@ -132,16 +132,16 @@ fn drawFrame(device: *const vk.Device, sync_objects: *const vk.SyncObjects, swap
         return;
     }
 
-    var present_info = vk.c.VkPresentInfoKHR{};
-    present_info.sType = vk.c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-    present_info.waitSemaphoreCount = 1;
-    present_info.pWaitSemaphores = &signal_semaphores[0];
-
     const swap_chains = [_]vk.c.VkSwapchainKHR{swap_chain.swap_chain};
-    present_info.swapchainCount = 1;
-    present_info.pSwapchains = &swap_chains[0];
-    present_info.pImageIndices = &image_index;
-    present_info.pResults = null;
+    const present_info = vk.c.VkPresentInfoKHR{
+        .sType = vk.c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &signal_semaphores[0],
+        .swapchainCount = 1,
+        .pSwapchains = &swap_chains[0],
+        .pImageIndices = &image_index,
+        .pResults = null,
+    };
 
     err = vk.c.vkQueuePresentKHR(device.present_queue, &present_info);
     if (err != vk.c.VK_SUCCESS) {
