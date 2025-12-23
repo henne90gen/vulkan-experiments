@@ -85,20 +85,17 @@ pub fn main() !void {
     const model = try models.Model.from_memory(gpa, suzanne);
     defer model.deinit(gpa);
 
-    const vertices = [_]f32{
-        0.0, -0.5, 1.0, 0.0, 0.0, // v0
-        0.5, 0.5, 0.0, 1.0, 0.0, // v1
-        -0.5, 0.5, 0.0, 0.0, 1.0, // v2
-    };
+    const vertex_data = try model.to_interleaved_data(gpa);
+    defer gpa.free(vertex_data);
 
-    const buffer_size = @sizeOf(@TypeOf(vertices[0])) * vertices.len;
+    const buffer_size = @sizeOf(@TypeOf(vertex_data[0])) * vertex_data.len;
     const vertex_buffer = try vk.createBuffer(&device, buffer_size);
     defer vk.destroyBuffer(&device, vertex_buffer);
 
     const vertex_buffer_memory = try vk.createBufferMemory(physical_device, &device, vertex_buffer);
     defer vk.destroyBufferMemory(&device, vertex_buffer_memory);
 
-    try vk.mapMemory(&device, vertex_buffer_memory, &vertices);
+    try vk.mapMemory(&device, vertex_buffer_memory, vertex_data);
 
     var current_frame: u32 = 0;
     while (!glfw.windowShouldClose(window)) {
@@ -114,7 +111,7 @@ pub fn main() !void {
             command_buffer,
             sync_objects,
             vertex_buffer,
-            vertices.len / 5,
+            @intCast(vertex_data.len / 10),
         );
         if (should_recreate_swap_chain) {
             var new_width: i32 = 0;
@@ -252,6 +249,6 @@ fn drawFrame(
     return false;
 }
 
-test "all" {
+test {
     std.testing.refAllDecls(@This());
 }

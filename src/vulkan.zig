@@ -624,7 +624,7 @@ pub fn createGraphicsPipeline(gpa: std.mem.Allocator, device: *const Device, swa
 
     const binding_description = c.VkVertexInputBindingDescription{
         .binding = 0,
-        .stride = @sizeOf(f32) * 5,
+        .stride = @sizeOf(f32) * 10,
         .inputRate = c.VK_VERTEX_INPUT_RATE_VERTEX,
     };
 
@@ -632,14 +632,20 @@ pub fn createGraphicsPipeline(gpa: std.mem.Allocator, device: *const Device, swa
         .{
             .binding = 0,
             .location = 0,
-            .format = c.VK_FORMAT_R32G32_SFLOAT,
+            .format = c.VK_FORMAT_R32G32B32A32_SFLOAT,
             .offset = 0,
         },
         .{
             .binding = 0,
             .location = 1,
             .format = c.VK_FORMAT_R32G32B32_SFLOAT,
-            .offset = @sizeOf(f32) * 2,
+            .offset = @sizeOf(f32) * 4,
+        },
+        .{
+            .binding = 0,
+            .location = 2,
+            .format = c.VK_FORMAT_R32G32B32_SFLOAT,
+            .offset = @sizeOf(f32) * 7,
         },
     };
 

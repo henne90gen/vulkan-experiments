@@ -1,16 +1,36 @@
 const std = @import("std");
 
+test {
+    _ = @import("models_test.zig");
+}
+
+const Face = struct {
+    vertices: []i32,
+    texture_coordinates: []i32,
+    normals: []i32,
+
+    pub fn deinit(self: *const Face, gpa: std.mem.Allocator) void {
+        gpa.free(self.vertices);
+        gpa.free(self.texture_coordinates);
+        gpa.free(self.normals);
+    }
+};
+
 pub const Model = struct {
-    vertices: [][3]f32,
-    texture_coordinates: [][2]f32,
+    vertices: [][4]f32,
+    texture_coordinates: [][3]f32,
     normals: [][3]f32,
-    indices: []i32,
+    faces: []Face,
 
     pub fn from_memory(gpa: std.mem.Allocator, file_content: []const u8) !Model {
-        var vertices = std.ArrayList([3]f32).empty;
-        var texture_coordinates = std.ArrayList([2]f32).empty;
+        var vertices = std.ArrayList([4]f32).empty;
+        errdefer vertices.deinit(gpa);
+        var texture_coordinates = std.ArrayList([3]f32).empty;
+        errdefer texture_coordinates.deinit(gpa);
         var normals = std.ArrayList([3]f32).empty;
-        var indices = std.ArrayList(i32).empty;
+        errdefer normals.deinit(gpa);
+        var faces = std.ArrayList(Face).empty;
+        errdefer faces.deinit(gpa);
 
         var last_line_start: usize = 0;
         for (0..file_content.len) |i| {
@@ -28,24 +48,65 @@ pub const Model = struct {
                 continue;
             }
 
-            std.debug.print("{s}\n", .{line});
-
             if (std.mem.eql(u8, "v ", line[0..2])) {
-                const coordiantes = [_]f32{0} ** 3;
-                // TODO parse coordinates
-                try vertices.append(gpa, coordiantes);
+                var coordinates = [_]f32{1.0} ** 4;
+                var local_idx: usize = 2;
+                coordinates[0] = try parseFloat(line, &local_idx);
+                coordinates[1] = try parseFloat(line, &local_idx);
+                coordinates[2] = try parseFloat(line, &local_idx);
+                if (local_idx < line.len) {
+                    coordinates[3] = try parseFloat(line, &local_idx);
+                }
+                try vertices.append(gpa, coordinates);
             }
 
             if (std.mem.eql(u8, "vt ", line[0..3])) {
-                const coordiantes = [_]f32{0} ** 2;
-                // TODO parse coordinates
-                try texture_coordinates.append(gpa, coordiantes);
+                var coordinates = [_]f32{0} ** 3;
+                var local_idx: usize = 3;
+                coordinates[0] = try parseFloat(line, &local_idx);
+                if (local_idx < line.len) {
+                    coordinates[1] = try parseFloat(line, &local_idx);
+                }
+                if (local_idx < line.len) {
+                    coordinates[2] = try parseFloat(line, &local_idx);
+                }
+                try texture_coordinates.append(gpa, coordinates);
             }
 
-            if (std.mem.eql(u8, "n ", line[0..2])) {
-                const coordiantes = [_]f32{0} ** 3;
-                // TODO parse coordinates
-                try normals.append(gpa, coordiantes);
+            if (std.mem.eql(u8, "vn ", line[0..3])) {
+                var coordinates = [_]f32{0} ** 3;
+                var local_idx: usize = 3;
+                coordinates[0] = try parseFloat(line, &local_idx);
+                coordinates[1] = try parseFloat(line, &local_idx);
+                coordinates[2] = try parseFloat(line, &local_idx);
+                try normals.append(gpa, coordinates);
+            }
+
+            if (std.mem.eql(u8, "f ", line[0..2])) {
+                var local_idx: usize = 2;
+                var vertex_indices = std.ArrayList(i32).empty;
+                errdefer vertex_indices.deinit(gpa);
+                var texture_coordinate_indices = std.ArrayList(i32).empty;
+                errdefer texture_coordinate_indices.deinit(gpa);
+                var normal_indices = std.ArrayList(i32).empty;
+                errdefer normal_indices.deinit(gpa);
+                while (local_idx < line.len and line[local_idx] != '\n') {
+                    const v_idx = try parseInt(line, &local_idx);
+                    local_idx += 1; // skip '/'
+                    const tc_idx = try parseInt(line, &local_idx);
+                    local_idx += 1; // skip '/'
+                    const n_idx = try parseInt(line, &local_idx);
+                    local_idx += 1; // skip ' '
+
+                    try vertex_indices.append(gpa, v_idx - 1);
+                    try texture_coordinate_indices.append(gpa, tc_idx - 1);
+                    try normal_indices.append(gpa, n_idx - 1);
+                }
+                try faces.append(gpa, .{
+                    .vertices = try vertex_indices.toOwnedSlice(gpa),
+                    .texture_coordinates = try texture_coordinate_indices.toOwnedSlice(gpa),
+                    .normals = try normal_indices.toOwnedSlice(gpa),
+                });
             }
 
             last_line_start = idx + 1;
@@ -55,33 +116,79 @@ pub const Model = struct {
             .vertices = try vertices.toOwnedSlice(gpa),
             .texture_coordinates = try texture_coordinates.toOwnedSlice(gpa),
             .normals = try normals.toOwnedSlice(gpa),
-            .indices = try indices.toOwnedSlice(gpa),
+            .faces = try faces.toOwnedSlice(gpa),
         };
     }
 
-    pub fn from_file(_: []const u8) !Model {
-        return error.TODO;
+    pub fn from_file(gpa: std.mem.Allocator, file_path: []const u8) !Model {
+        const file = try std.fs.cwd().openFile(file_path, .{});
+        defer file.close();
+        const file_content = try file.readToEndAlloc(gpa, 8192);
+        return from_memory(gpa, file_content);
     }
 
     pub fn deinit(self: *const Model, gpa: std.mem.Allocator) void {
         gpa.free(self.vertices);
         gpa.free(self.texture_coordinates);
         gpa.free(self.normals);
-        gpa.free(self.indices);
+        for (self.faces) |face| {
+            face.deinit(gpa);
+        }
+        gpa.free(self.faces);
+    }
+
+    pub fn to_interleaved_data(self: *const Model, gpa: std.mem.Allocator) ![]f32 {
+        var float_count: usize = 0;
+        for (self.faces) |face| {
+            float_count += face.vertices.len * (4 + 3 + 3);
+        }
+
+        var interleaved = try std.ArrayList(f32).initCapacity(gpa, float_count);
+        errdefer interleaved.deinit(gpa);
+
+        for (self.faces) |face| {
+            for (0..face.vertices.len) |idx| {
+                const v_idx = face.vertices[idx];
+                const vertex = self.vertices[@intCast(v_idx)];
+                try interleaved.append(gpa, vertex[0]);
+                try interleaved.append(gpa, vertex[1]);
+                try interleaved.append(gpa, vertex[2]);
+                try interleaved.append(gpa, vertex[3]);
+
+                const tc_idx = face.texture_coordinates[idx];
+                const texture_coordinate = self.texture_coordinates[@intCast(tc_idx)];
+                try interleaved.append(gpa, texture_coordinate[0]);
+                try interleaved.append(gpa, texture_coordinate[1]);
+                try interleaved.append(gpa, texture_coordinate[2]);
+
+                const n_idx = face.texture_coordinates[idx];
+                const normal = self.texture_coordinates[@intCast(n_idx)];
+                try interleaved.append(gpa, normal[0]);
+                try interleaved.append(gpa, normal[1]);
+                try interleaved.append(gpa, normal[2]);
+            }
+        }
+
+        return interleaved.toOwnedSlice(gpa);
     }
 };
 
-const t = std.testing;
-test "loads simple triangle model" {
-    var allocator = std.heap.DebugAllocator(.{}){};
-    defer _ = allocator.deinit();
-    const gpa = allocator.allocator();
+fn parseFloat(l: []const u8, index: *usize) !f32 {
+    const start = index.*;
+    while (index.* < l.len and (l[index.*] != ' ' and l[index.*] != '\n')) {
+        index.* += 1;
+    }
+    const float_str = l[start..index.*];
+    const result = try std.fmt.parseFloat(f32, float_str);
+    index.* += 1;
+    return result;
+}
 
-    const model = try Model.from_memory(gpa,
-        \\v 0.0 -0.5 0
-        \\v 0.5 0.5 0
-        \\v -0.5 0.5 0
-    );
-    defer model.deinit(gpa);
-    try t.expectEqual(3, model.vertices.len);
+fn parseInt(l: []const u8, index: *usize) !i32 {
+    const start = index.*;
+    while (index.* < l.len and (l[index.*] != ' ' and l[index.*] != '\n' and l[index.*] != '/')) {
+        index.* += 1;
+    }
+    const float_str = l[start..index.*];
+    return try std.fmt.parseInt(i32, float_str, 10);
 }
