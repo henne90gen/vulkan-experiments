@@ -20,6 +20,17 @@ jobs:
           version: 1.4.328.1
           cache: true
 
+      - name: Install Vulkan SDK
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          # You can set the Vulkan SDK version to download.
+          # Defaults to latest version, if version not set.
+          vulkan_version: 1.4.328.1
+          # optional_components: com.lunarg.vulkan.vma
+          install_runtime: true
+          cache: true
+          stripdown: true
+
       - if: startsWith(matrix.os, 'linux')
         run: zig build -Dvulkan-sdk-path="$VULKAN_SDK"
       - if: startsWith(matrix.os, 'windows')
