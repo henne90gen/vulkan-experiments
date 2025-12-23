@@ -31,14 +31,15 @@ pub fn build(b: *std.Build) !void {
 
     // Vulkan
     const vulkan_sdk_path = b.option([]const u8, "vulkan-sdk-path", "Path to Vulkan SDK");
-    if (builtin.os.tag == .windows) {
-        if (vulkan_sdk_path == null) {
-            std.debug.print("Missing required option -Dvulkan-sdk-path", .{});
-            return error.MissingVulkanSDKPath;
-        }
-        exe.addIncludePath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/Include", .{vulkan_sdk_path.?}) });
+    if (vulkan_sdk_path == null and builtin.os.tag == .windows) {
+        std.debug.print("Missing required option -Dvulkan-sdk-path", .{});
+        return error.MissingVulkanSDKPath;
     }
-    exe.linkSystemLibrary("vulkan");
+    if (vulkan_sdk_path != null) {
+        exe.root_module.addIncludePath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/Include", .{vulkan_sdk_path.?}) });
+        exe.root_module.addLibraryPath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/Lib", .{vulkan_sdk_path.?}) });
+    }
+    exe.root_module.linkSystemLibrary("vulkan", .{});
 
     b.installArtifact(exe);
 
