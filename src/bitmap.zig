@@ -11,19 +11,20 @@ pub const Bitmap = struct {
     pub fn from_memory(gpa: std.mem.Allocator, file_content: []const u8) !Bitmap {
         const header: *const Header = @ptrCast(@alignCast(&file_content[0]));
         const bitmap_info: *const BitmapInfoHeader = @ptrCast(@alignCast(&file_content[@sizeOf(Header)]));
-        if (bitmap_info.header_size != @sizeOf(BitmapInfoHeader)) {
-            return error.UnsupportedBitmapFormat;
-        }
-
-        if (bitmap_info.bits_per_pixel != 24) {
-            return error.UnsupportedColorFormat;
-        }
-
         const bytes_per_pixel = bitmap_info.bits_per_pixel / 8;
         const dst_bytes_per_pixel = 4;
         const pixels = try gpa.alloc(u8, @intCast(dst_bytes_per_pixel * bitmap_info.width * bitmap_info.height));
+        errdefer gpa.free(pixels);
 
-        const color_table = [_]i32{ 2, 1, 0 };
+        var color_table: [4]i32 = undefined;
+        if (bitmap_info.bits_per_pixel == 24) {
+            color_table = [_]i32{ 2, 1, 0, 0 };
+        } else if (bitmap_info.bits_per_pixel == 32) {
+            color_table = [_]i32{ 2, 1, 0, 3 };
+        } else {
+            std.debug.print("Unsupported color format: {}\n", .{bitmap_info.bits_per_pixel});
+            return error.UnsupportedColorFormat;
+        }
 
         const row_size = @divFloor(bitmap_info.width * bitmap_info.bits_per_pixel + 31, 32) * 4;
         for (0..@intCast(bitmap_info.height)) |row| {
