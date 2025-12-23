@@ -12,11 +12,13 @@ layout(location = 2) in float rotation;
 layout(location = 3) in vec2 translation;
 layout(location = 4) in vec2 scale;
 layout(location = 5) in int texture_index;
+layout(location = 6) in uint render_hints;
 
 layout(location = 0) out int frag_geometry_type;
 layout(location = 1) out vec2 frag_position;
 layout(location = 2) out float frag_radius;
 layout(location = 3) out int frag_texture_index;
+layout(location = 4) out uint frag_render_hints;
 
 vec2 applyTransformations(vec2 pos, float rot, vec2 scl, vec2 trans) {
     vec2 scaled_position = pos * scl;
@@ -46,9 +48,12 @@ void main() {
             scale,
             translation + ubo.offset
         );
-    gl_Position = vec4(applyZoomAndAspectRatio(transformed_position, ubo.zoom, ubo.aspect_ratio), 0.0, 1.0);
+    transformed_position = applyZoomAndAspectRatio(transformed_position, ubo.zoom, ubo.aspect_ratio);
+    gl_Position = vec4(transformed_position, 0.0, 1.0);
+
     frag_geometry_type = geometry_type;
     frag_position = position.xy;
     frag_radius = scale.x;
     frag_texture_index = texture_index;
+    frag_render_hints = render_hints;
 }

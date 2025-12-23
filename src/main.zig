@@ -39,10 +39,14 @@ const NavigationData = struct {
 };
 
 const Primitive = union(enum) {
-    point: [2]f32,
+    point: struct {
+        data: [2]f32,
+        render_hints: rd.RenderHints = .{},
+    },
     line: struct {
         start: [2]f32,
         end: [2]f32,
+        render_hints: rd.RenderHints = .{},
     },
 };
 
@@ -69,6 +73,11 @@ pub fn main() !void {
         .primitives = std.ArrayList(Primitive).empty,
     };
     defer window_state.deinit();
+
+    try window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = [2]f32{ 2.0, 2.0 } } });
+    try window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = [2]f32{ 2.0, -2.0 } } });
+    try window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = [2]f32{ -2.0, -2.0 } } });
+    try window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = [2]f32{ -2.0, 2.0 } } });
 
     glfw.setWindowUserPointer(window, &window_state);
     glfw.setKeyCallback(window, keyCallback);
@@ -124,9 +133,10 @@ pub fn main() !void {
                     try geometry_instances.append(allocator, .{
                         .geometry_type = rd.GeometryType.Circle,
                         .rotation = 0.0,
-                        .translation = point,
+                        .translation = point.data,
                         .scale = [2]f32{ 1.0, 1.0 },
                         .texture_index = 0,
+                        .render_hints = point.render_hints,
                     });
                 },
                 .line => |line| {
@@ -146,6 +156,7 @@ pub fn main() !void {
                         .translation = midpoint,
                         .scale = [2]f32{ distance, 0.5 },
                         .texture_index = 0,
+                        .render_hints = line.render_hints,
                     });
                 },
             }
@@ -172,6 +183,7 @@ pub fn main() !void {
                         .translation = midpoint,
                         .scale = [2]f32{ distance, 0.5 },
                         .texture_index = 0,
+                        .render_hints = .{},
                     });
                     try geometry_instances.append(allocator, .{
                         .geometry_type = rd.GeometryType.Circle,
@@ -179,6 +191,7 @@ pub fn main() !void {
                         .translation = start,
                         .scale = [2]f32{ 1.0, 1.0 },
                         .texture_index = 0,
+                        .render_hints = .{},
                     });
                     try geometry_instances.append(allocator, .{
                         .geometry_type = rd.GeometryType.Circle,
@@ -186,6 +199,7 @@ pub fn main() !void {
                         .translation = end,
                         .scale = [2]f32{ 1.0, 1.0 },
                         .texture_index = 0,
+                        .render_hints = .{},
                     });
                 }
             },
@@ -250,7 +264,7 @@ export fn keyCallback(window: ?*glfw.c.GLFWwindow, key: i32, scancode: i32, acti
         const rand = prng.random();
         const x = (rand.float(f32) * 2.0 - 1.0) / window_state.?.zoom;
         const y = (rand.float(f32) * 2.0 - 1.0) / window_state.?.zoom;
-        window_state.?.primitives.append(window_state.?.allocator, .{ .point = [2]f32{ x, y } }) catch {
+        window_state.?.primitives.append(window_state.?.allocator, .{ .point = .{ .data = [2]f32{ x, y } } }) catch {
             std.debug.print("Failed to append geometry instance\n", .{});
         };
         std.debug.print("Point appended: ({},{}) -> primitives count = {}\n", .{ x, y, window_state.?.primitives.items.len });
@@ -304,13 +318,16 @@ fn handleNavigation(window: *glfw.c.GLFWwindow, button: i32, action: i32, window
     const scaled = mapMousePositionToObjectSpace(window, window_state, mousePosition);
     std.debug.print("Searching for points around: ({}, {})\n", .{ scaled[0], scaled[1] });
     const v0 = zm.f32x4(scaled[0], scaled[1], 0.0, 0.0);
-    for (window_state.primitives.items) |primitive| {
-        switch (primitive) {
-            .point => |point| {
-                const v1 = zm.f32x4(point[0], point[1], 0.0, 0.0);
+    for (window_state.primitives.items) |*primitive| {
+        switch (primitive.*) {
+            .point => |*point| {
+                const v1 = zm.f32x4(point.data[0], point.data[1], 0.0, 0.0);
                 const diff = v0 - v1;
                 const distance = zm.length2(diff)[0];
-                std.debug.print("Primitive: {any} distance={}\n", .{ primitive, distance });
+                if (distance < 0.5) {
+                    point.render_hints.selected = !point.render_hints.selected;
+                    std.debug.print("Primitive: {any} distance={}\n", .{ primitive, distance });
+                }
             },
             .line => continue,
         }
@@ -324,7 +341,7 @@ fn createPoint(window: *glfw.c.GLFWwindow, button: i32, action: i32, window_stat
 
     const mousePosition = glfw.getMousePosition(window);
     const scaled = mapMousePositionToObjectSpace(window, window_state, mousePosition);
-    window_state.primitives.append(window_state.allocator, .{ .point = scaled }) catch {
+    window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = scaled } }) catch {
         std.debug.print("Failed to append point\n", .{});
     };
     std.debug.print("Point added: ({}, {}) -> primitives count = {}\n", .{ scaled[0], scaled[1], window_state.primitives.items.len });
@@ -345,10 +362,10 @@ fn createLine(window: *glfw.c.GLFWwindow, button: i32, action: i32, window_state
         } }) catch {
             std.debug.print("Failed to append line\n", .{});
         };
-        window_state.primitives.append(window_state.allocator, .{ .point = start }) catch {
+        window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = start } }) catch {
             std.debug.print("Failed to append point\n", .{});
         };
-        window_state.primitives.append(window_state.allocator, .{ .point = scaled }) catch {
+        window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = scaled } }) catch {
             std.debug.print("Failed to append point\n", .{});
         };
         std.debug.print("Line added: ({}, {}) - ({}, {}) -> primitives count = {}\n", .{ start[0], start[1], scaled[0], scaled[1], window_state.primitives.items.len });

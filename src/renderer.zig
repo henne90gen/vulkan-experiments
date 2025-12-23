@@ -471,12 +471,26 @@ pub const GeometryType = enum(i32) {
     TexturedQuad = 2,
 };
 
+pub const RenderHints = packed struct {
+    hovered: bool = false,
+    selected: bool = false,
+    disabled: bool = false,
+
+    _padding: u29 = 0,
+
+    comptime {
+        std.debug.assert(@sizeOf(@This()) == @sizeOf(u32));
+        std.debug.assert(@bitSizeOf(@This()) == @bitSizeOf(u32));
+    }
+};
+
 pub const GeometryInstance = extern struct {
     geometry_type: GeometryType align(4),
     rotation: f32 align(4),
     translation: [2]f32 align(8),
     scale: [2]f32 align(8),
     texture_index: i32 align(4),
+    render_hints: RenderHints align(4),
 };
 
 fn createWindowSurface(instance: vk.c.VkInstance, window: *glfw.c.GLFWwindow) vk.c.VkSurfaceKHR {
@@ -539,6 +553,12 @@ fn vertexDescription() vk.VertexDescription {
                 .location = 5,
                 .format = vk.c.VK_FORMAT_R32_SINT,
                 .offset = @offsetOf(GeometryInstance, "texture_index"),
+            },
+            .{
+                .binding = 1,
+                .location = 6,
+                .format = vk.c.VK_FORMAT_R32_UINT,
+                .offset = @offsetOf(GeometryInstance, "render_hints"),
             },
         },
     };
