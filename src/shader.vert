@@ -23,6 +23,5 @@ void main() {
     } else {
         gl_Position = vec4(transformed_position.x, transformed_position.y * ubo.aspect_ratio, 0.0, 1.0);
     }
-    // gl_Position = vec4(position + translation, 0.0, 1.0);
     frag_geometry_type = int(geometry_type);
 }

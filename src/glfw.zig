@@ -51,3 +51,11 @@ pub fn setWindowShouldClose(window: *c.GLFWwindow, shouldClose: bool) void {
 pub fn getFramebufferSize(window: *c.GLFWwindow, width: *i32, height: *i32) void {
     c.glfwGetFramebufferSize(window, width, height);
 }
+
+pub fn setWindowUserPointer(window: *c.GLFWwindow, pointer: ?*anyopaque) void {
+    c.glfwSetWindowUserPointer(window, pointer);
+}
+
+pub fn getWindowUserPointer(window: *c.GLFWwindow, T: type) ?*T {
+    return @ptrCast(@alignCast(c.glfwGetWindowUserPointer(window)));
+}

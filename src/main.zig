@@ -15,7 +15,7 @@ test {
 }
 
 const MAX_FRAMES_IN_FLIGHT = 2;
-const MAX_GEOMETRY_INSTANCES = 1000;
+const INITIAL_GEOMETRY_INSTANCE_COUNT = 1;
 
 const PerFrameVulkanData = struct {
     command_buffer: vk.c.VkCommandBuffer,
@@ -41,16 +41,26 @@ const GeometryInstance = struct {
     scale: [2]f32 align(8),
 };
 
+const WindowState = struct {
+    allocator: std.mem.Allocator,
+    rotation: f32,
+    geometry_instances: std.ArrayList(GeometryInstance),
+
+    pub fn deinit(self: *WindowState) void {
+        self.geometry_instances.deinit(self.allocator);
+    }
+};
+
 pub fn main() !void {
-    var allocator = std.heap.DebugAllocator(.{}){};
+    var debug_allocator = std.heap.DebugAllocator(.{}){};
     defer {
-        const result = allocator.deinit();
+        const result = debug_allocator.deinit();
         switch (result) {
             std.heap.Check.leak => std.debug.print("Memory leak detected!\n", .{}),
             else => {},
         }
     }
-    const gpa = allocator.allocator();
+    const allocator = debug_allocator.allocator();
 
     try glfw.init();
     defer glfw.terminate();
@@ -58,10 +68,18 @@ pub fn main() !void {
     const window = try glfw.createWindow(800, 600, "Hello World");
     defer glfw.destroyWindow(window);
 
+    var window_state = WindowState{
+        .allocator = allocator,
+        .rotation = 0.0,
+        .geometry_instances = std.ArrayList(GeometryInstance).empty,
+    };
+    defer window_state.deinit();
+
+    glfw.setWindowUserPointer(window, &window_state);
     glfw.setKeyCallback(window, keyCallback);
 
     const requiredExtensions = glfw.getRequiredInstanceExtensions();
-    const instance = try vk.createInstance(gpa, requiredExtensions);
+    const instance = try vk.createInstance(allocator, requiredExtensions);
     defer vk.destroyInstance(instance);
 
     const debug_messenger = try vk.setupDebugMessenger(instance);
@@ -70,39 +88,39 @@ pub fn main() !void {
     const surface = createWindowSurface(instance, window);
     defer vk.destroySurface(instance, surface);
 
-    const device = try vk.Device.init(gpa, instance, surface);
+    const device = try vk.Device.init(allocator, instance, surface);
     defer device.deinit();
 
     var width: i32 = 0;
     var height: i32 = 0;
     glfw.getFramebufferSize(window, &width, &height);
-    var swap_chain = try vk.SwapChain.init(gpa, &device, surface, .{ .width = @intCast(width), .height = @intCast(height) });
-    defer swap_chain.deinit(gpa, &device);
+    var swap_chain = try vk.SwapChain.init(allocator, &device, surface, .{ .width = @intCast(width), .height = @intCast(height) });
+    defer swap_chain.deinit(allocator, &device);
 
     std.debug.print("Swap chain images count: {}\n", .{swap_chain.images.len});
 
-    var image_views = try vk.createImageViews(gpa, &device, &swap_chain);
-    defer vk.destroyImageViews(gpa, &device, image_views);
+    var image_views = try vk.createImageViews(allocator, &device, &swap_chain);
+    defer vk.destroyImageViews(allocator, &device, image_views);
 
     std.debug.print("Image views count: {}\n", .{image_views.len});
 
-    const bitmap = try bmp.Bitmap.from_memory(gpa, greenland_grid_velo);
-    defer bitmap.deinit(gpa);
+    const bitmap = try bmp.Bitmap.from_memory(allocator, greenland_grid_velo);
+    defer bitmap.deinit(allocator);
 
     const descriptor_set_layout = try vk.createDescriptorSetLayout(&device);
     defer vk.destroyDescriptorSetLayout(&device, descriptor_set_layout);
 
     const vertex_desription = vertexDescription();
-    const pipeline = try vk.createGraphicsPipeline(gpa, &device, &swap_chain, shader_vert, shader_frag, descriptor_set_layout, vertex_desription);
+    const pipeline = try vk.createGraphicsPipeline(allocator, &device, &swap_chain, shader_vert, shader_frag, descriptor_set_layout, vertex_desription);
     defer pipeline.deinit(&device);
 
     var depth_image = try vk.createDepthResources(&device, .{ .width = @intCast(width), .height = @intCast(height) });
     defer depth_image.deinit(&device);
 
-    var framebuffers = try vk.createFramebuffers(gpa, &device, &pipeline, &swap_chain, image_views, &depth_image);
-    defer vk.destroyFramebuffers(gpa, &device, framebuffers);
+    var framebuffers = try vk.createFramebuffers(allocator, &device, &pipeline, &swap_chain, image_views, &depth_image);
+    defer vk.destroyFramebuffers(allocator, &device, framebuffers);
 
-    const command_pool = try vk.createCommandPool(gpa, surface, &device);
+    const command_pool = try vk.createCommandPool(allocator, surface, &device);
     defer vk.destroyCommandPool(&device, command_pool);
 
     const texture_image = try vk.createTextureImage(&device, command_pool, bitmap.pixels, bitmap.width, bitmap.height, bitmap.bytes_per_pixel);
@@ -135,19 +153,19 @@ pub fn main() !void {
 
     try vk.mapMemory(&device, rectangle_vertex_buffer_memory, @ptrCast(&rectangle_vertex_data));
 
-    const instance_buffer_size = @sizeOf(GeometryInstance) * MAX_GEOMETRY_INSTANCES;
-    std.debug.print("Instance buffer size: {}\n", .{instance_buffer_size});
-    const instance_buffer = try vk.createBuffer(&device, vk.c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, instance_buffer_size);
+    var current_geometry_instance_count: usize = INITIAL_GEOMETRY_INSTANCE_COUNT;
+    var instance_buffer_size = @sizeOf(GeometryInstance) * current_geometry_instance_count;
+    var instance_buffer = try vk.createBuffer(&device, vk.c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, instance_buffer_size);
     defer vk.destroyBuffer(&device, instance_buffer);
 
-    const instance_buffer_memory = try vk.createBufferMemory(&device, instance_buffer, vk.c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    var instance_buffer_memory = try vk.createBufferMemory(&device, instance_buffer, vk.c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     defer vk.destroyBufferMemory(&device, instance_buffer_memory);
 
     const descriptor_pool = try vk.createDescriptorPool(&device, MAX_FRAMES_IN_FLIGHT);
     defer vk.destroyDescriptorPool(&device, descriptor_pool);
 
-    const descriptor_sets = try vk.createDescriptorSets(gpa, &device, descriptor_pool, descriptor_set_layout, MAX_FRAMES_IN_FLIGHT);
-    defer vk.destroyDescriptorSets(gpa, descriptor_sets);
+    const descriptor_sets = try vk.createDescriptorSets(allocator, &device, descriptor_pool, descriptor_set_layout, MAX_FRAMES_IN_FLIGHT);
+    defer vk.destroyDescriptorSets(allocator, descriptor_sets);
 
     var per_frame_vk_data = [_]PerFrameVulkanData{undefined} ** MAX_FRAMES_IN_FLIGHT;
     defer {
@@ -213,7 +231,12 @@ pub fn main() !void {
         vk.c.vkUpdateDescriptorSets(device.device, descriptor_write.len, &descriptor_write[0], 0, null);
     }
 
-    var rotation: f32 = 0.0;
+    try window_state.geometry_instances.append(window_state.allocator, .{
+        .geometry_type = 1,
+        .rotation = window_state.rotation,
+        .translation = [2]f32{ 0.0, 0.5 },
+        .scale = [2]f32{ 1.0, 1.0 },
+    });
 
     var current_frame: u32 = 0;
     while (!glfw.windowShouldClose(window)) {
@@ -224,32 +247,27 @@ pub fn main() !void {
         var new_height: i32 = 0;
         glfw.getFramebufferSize(window, &new_width, &new_height);
 
-        rotation += 0.01;
+        window_state.rotation += 0.01;
+
         const ubo = UniformBufferObject{
             .aspect_ratio = @as(f32, @floatFromInt(new_width)) / @as(f32, @floatFromInt(new_height)),
         };
 
-        const geometry_instances = [_]GeometryInstance{
-            .{
-                .geometry_type = 1,
-                .rotation = 0.0,
-                .translation = [2]f32{ 0.5, 0.0 },
-                .scale = [2]f32{ 1.0, 1.0 },
-            },
-            .{
-                .geometry_type = 1,
-                .rotation = 0.0,
-                .translation = [2]f32{ -0.5, 0.0 },
-                .scale = [2]f32{ 1.0, 1.0 },
-            },
-            .{
-                .geometry_type = 1,
-                .rotation = rotation,
-                .translation = [2]f32{ 0.0, 0.0 },
-                .scale = [2]f32{ 1.0, 1.0 },
-            },
-        };
-        try vk.mapMemory(&device, instance_buffer_memory, @ptrCast(&geometry_instances));
+        for (window_state.geometry_instances.items) |*geometry_instance| {
+            geometry_instance.rotation += 0.01;
+        }
+
+        if (window_state.geometry_instances.items.len > current_geometry_instance_count) {
+            _ = vk.c.vkDeviceWaitIdle(device.device);
+
+            current_geometry_instance_count = window_state.geometry_instances.items.len;
+            vk.destroyBufferMemory(&device, instance_buffer_memory);
+            vk.destroyBuffer(&device, instance_buffer);
+            instance_buffer_size = window_state.geometry_instances.items.len * @sizeOf(GeometryInstance);
+            instance_buffer = try vk.createBuffer(&device, vk.c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, instance_buffer_size);
+            instance_buffer_memory = try vk.createBufferMemory(&device, instance_buffer, vk.c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        }
+        try vk.mapMemory(&device, instance_buffer_memory, @ptrCast(window_state.geometry_instances.items));
 
         const vk_data = per_frame_vk_data[current_frame];
         const should_recreate_swap_chain = try drawFrame(
@@ -262,11 +280,11 @@ pub fn main() !void {
             rectangle_vertex_buffer,
             rectangle_vertex_data.len,
             instance_buffer,
-            geometry_instances.len,
+            window_state.geometry_instances.items.len,
         );
         if (should_recreate_swap_chain) {
             const result = try vk.recreateSwapChain(
-                gpa,
+                allocator,
                 &device,
                 &pipeline,
                 surface,
@@ -287,7 +305,9 @@ pub fn main() !void {
         const end = std.time.nanoTimestamp();
         const frame_time_ns = end - start;
         const frame_time_ms = @as(f32, @floatFromInt(frame_time_ns)) / 1_000_000.0;
-        std.debug.print("Frame time: {d:.2} ms - {d} fps\n", .{ frame_time_ms, 1000.0 / frame_time_ms });
+        if (false) {
+            std.debug.print("Frame time: {d:.2} ms - {d} fps\n", .{ frame_time_ms, 1000.0 / frame_time_ms });
+        }
 
         const target_frame_time_ns: u64 = 16 * 1_000_000;
         if (frame_time_ns < target_frame_time_ns) {
@@ -308,8 +328,30 @@ export fn keyCallback(window: ?*glfw.c.GLFWwindow, key: i32, scancode: i32, acti
     if (window == null) {
         return;
     }
+
+    var window_state = glfw.getWindowUserPointer(window.?, WindowState);
+    if (window_state == null) {
+        return;
+    }
+
     if (key == glfw.c.GLFW_KEY_ESCAPE and action == glfw.c.GLFW_PRESS) {
         glfw.setWindowShouldClose(window.?, true);
+    }
+
+    if (key == glfw.c.GLFW_KEY_SPACE and action == glfw.c.GLFW_PRESS) {
+        var prng = std.Random.DefaultPrng.init(@intCast(std.time.milliTimestamp()));
+        const rand = prng.random();
+        const x = rand.float(f32);
+        const y = rand.float(f32);
+        window_state.?.geometry_instances.append(window_state.?.allocator, .{
+            .geometry_type = 1,
+            .rotation = window_state.?.rotation,
+            .translation = [2]f32{ x, y },
+            .scale = [2]f32{ 1.0, 1.0 },
+        }) catch {
+            std.debug.print("Failed to append geometry instance\n", .{});
+        };
+        std.debug.print("Geometry instance appended: {} rotation={}\n", .{ window_state.?.geometry_instances.items.len, window_state.?.rotation });
     }
 }
 
