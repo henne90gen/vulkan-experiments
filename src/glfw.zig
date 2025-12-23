@@ -49,3 +49,7 @@ pub fn setKeyCallback(window: *c.GLFWwindow, keyCallback: fn (window: ?*c.GLFWwi
 pub fn setWindowShouldClose(window: *c.GLFWwindow, shouldClose: bool) void {
     c.glfwSetWindowShouldClose(window, @intFromBool(shouldClose));
 }
+
+pub fn getFramebufferSize(window: *c.GLFWwindow, width: *i32, height: *i32) void {
+    c.glfwGetFramebufferSize(window, width, height);
+}

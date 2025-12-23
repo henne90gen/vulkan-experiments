@@ -42,7 +42,10 @@ pub fn main() !void {
     const device = try vk.createLogicalDevice(gpa, physical_device, surface);
     defer device.deinit();
 
-    var swap_chain = try vk.createSwapChain(gpa, physical_device, &device, surface);
+    var width: i32 = 0;
+    var height: i32 = 0;
+    glfw.getFramebufferSize(window, &width, &height);
+    var swap_chain = try vk.createSwapChain(gpa, physical_device, &device, surface, .{ .width = @intCast(width), .height = @intCast(height) });
     defer swap_chain.deinit(gpa, &device);
 
     std.debug.print("Swap chain images count: {}\n", .{swap_chain.images.len});
@@ -109,6 +112,9 @@ pub fn main() !void {
             vertices.len / 5,
         );
         if (should_recreate_swap_chain) {
+            var new_width: i32 = 0;
+            var new_height: i32 = 0;
+            glfw.getFramebufferSize(window, &new_width, &new_height);
             const result = try vk.recreateSwapChain(
                 gpa,
                 physical_device,
@@ -118,6 +124,7 @@ pub fn main() !void {
                 &swap_chain,
                 image_views,
                 framebuffers,
+                .{ .width = @intCast(new_width), .height = @intCast(new_height) },
             );
             swap_chain = result.swap_chain;
             image_views = result.image_views;

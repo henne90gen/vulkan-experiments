@@ -454,34 +454,25 @@ fn chooseSwapPresentMode(available_present_modes: []c.VkPresentModeKHR) c.VkPres
     return c.VK_PRESENT_MODE_FIFO_KHR;
 }
 
-fn chooseSwapExtent(capabilities: c.VkSurfaceCapabilitiesKHR) c.VkExtent2D {
+fn chooseSwapExtent(capabilities: c.VkSurfaceCapabilitiesKHR, extent: c.VkExtent2D) c.VkExtent2D {
     if (capabilities.currentExtent.width != std.math.maxInt(u32)) {
         return capabilities.currentExtent;
     }
 
-    // TODO get good default extent
-    // int width, height;
-    //     glfwGetFramebufferSize(window, &width, &height);
-
-    var actual_extent = c.VkExtent2D{
-        .width = 800,
-        .height = 600,
-    };
-
+    var actual_extent = extent;
     actual_extent.width = std.math.clamp(actual_extent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
     actual_extent.height = std.math.clamp(actual_extent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
-
     return actual_extent;
 }
 
-pub fn createSwapChain(gpa: std.mem.Allocator, physical_device: c.VkPhysicalDevice, device: *const Device, surface: c.VkSurfaceKHR) !SwapChain {
+pub fn createSwapChain(gpa: std.mem.Allocator, physical_device: c.VkPhysicalDevice, device: *const Device, surface: c.VkSurfaceKHR, extent: c.VkExtent2D) !SwapChain {
     const swap_chain_support = try querySwapChainSupport(gpa, physical_device, surface);
     defer swap_chain_support.deinit(gpa);
 
     var swap_chain = SwapChain{
         .surface_format = chooseSwapSurfaceFormat(swap_chain_support.formats),
         .present_mode = chooseSwapPresentMode(swap_chain_support.present_modes),
-        .extent = chooseSwapExtent(swap_chain_support.capabilities),
+        .extent = chooseSwapExtent(swap_chain_support.capabilities, extent),
     };
     var image_count = swap_chain_support.capabilities.minImageCount + 1;
     if (swap_chain_support.capabilities.maxImageCount > 0 and image_count > swap_chain_support.capabilities.maxImageCount) {
@@ -1043,6 +1034,7 @@ pub fn recreateSwapChain(
     swap_chain: *const SwapChain,
     image_views: []c.VkImageView,
     framebuffers: []c.VkFramebuffer,
+    extent: c.VkExtent2D,
 ) !SwapChainRecreateResult {
     const err = c.vkDeviceWaitIdle(device.device);
     if (err != c.VK_SUCCESS) {
@@ -1054,7 +1046,7 @@ pub fn recreateSwapChain(
     destroyImageViews(gpa, device, image_views);
     swap_chain.deinit(gpa, device);
 
-    const new_swap_chain = try createSwapChain(gpa, physical_device, device, surface);
+    const new_swap_chain = try createSwapChain(gpa, physical_device, device, surface, extent);
     const new_image_views = try createImageViews(gpa, device, &new_swap_chain);
     const new_framebuffers = try createFramebuffers(gpa, device, pipeline, &new_swap_chain, new_image_views);
 
