@@ -1287,8 +1287,8 @@ fn hasStencilComponent(format: c.VkFormat) bool {
 
 fn createImage(
     device: *const Device,
-    width: u32,
-    height: u32,
+    width: usize,
+    height: usize,
     format: c.VkFormat,
     aspect_flags: c.VkImageAspectFlags,
     tiling: c.VkImageTiling,
@@ -1300,8 +1300,8 @@ fn createImage(
         .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType = c.VK_IMAGE_TYPE_2D,
         .extent = .{
-            .width = width,
-            .height = height,
+            .width = @intCast(width),
+            .height = @intCast(height),
             .depth = 1,
         },
         .mipLevels = 1,
@@ -1359,11 +1359,13 @@ pub fn createTextureImage(
     device: *const Device,
     command_pool: c.VkCommandPool,
     pixels: []const u8,
-    width: u32,
-    height: u32,
-    channels: u32,
+    width: usize,
+    height: usize,
+    bytes_per_pixel: usize,
 ) !Image {
-    const image_size: c.VkDeviceSize = width * height * channels;
+    const image_size = width * height * bytes_per_pixel;
+    //   std.debug.print("Image size: {}\n", .{image_size});
+
     const staging_buffer = try createBuffer(device, c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT, image_size);
     defer destroyBuffer(device, staging_buffer);
     const staging_buffer_memory = try createBufferMemory(device, staging_buffer, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
@@ -1383,7 +1385,7 @@ pub fn createTextureImage(
         device,
         width,
         height,
-        c.VK_FORMAT_R8G8B8_SRGB,
+        c.VK_FORMAT_R8G8B8A8_SRGB,
         c.VK_IMAGE_ASPECT_COLOR_BIT,
         c.VK_IMAGE_TILING_OPTIMAL,
         c.VK_IMAGE_USAGE_TRANSFER_DST_BIT | c.VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -1391,9 +1393,9 @@ pub fn createTextureImage(
         true,
     );
 
-    try transitionImageLayout(device, command_pool, &image, c.VK_FORMAT_R8G8B8_SRGB, c.VK_IMAGE_LAYOUT_UNDEFINED, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    try transitionImageLayout(device, command_pool, &image, c.VK_FORMAT_R8G8B8A8_SRGB, c.VK_IMAGE_LAYOUT_UNDEFINED, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     try copyBufferToImage(device, command_pool, staging_buffer, image.image, width, height);
-    try transitionImageLayout(device, command_pool, &image, c.VK_FORMAT_R8G8B8_SRGB, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    try transitionImageLayout(device, command_pool, &image, c.VK_FORMAT_R8G8B8A8_SRGB, c.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
     return image;
 }
@@ -1529,7 +1531,7 @@ pub fn transitionImageLayout(device: *const Device, command_pool: c.VkCommandPoo
     try endSingleTimeCommands(device, command_pool, command_buffer);
 }
 
-pub fn copyBufferToImage(device: *const Device, command_pool: c.VkCommandPool, buffer: c.VkBuffer, image: c.VkImage, width: u32, height: u32) !void {
+pub fn copyBufferToImage(device: *const Device, command_pool: c.VkCommandPool, buffer: c.VkBuffer, image: c.VkImage, width: usize, height: usize) !void {
     const command_buffer = try beginSingleTimeCommands(device, command_pool);
 
     const region = c.VkBufferImageCopy{
@@ -1544,8 +1546,8 @@ pub fn copyBufferToImage(device: *const Device, command_pool: c.VkCommandPool, b
         },
         .imageOffset = .{ .x = 0, .y = 0, .z = 0 },
         .imageExtent = .{
-            .width = width,
-            .height = height,
+            .width = @intCast(width),
+            .height = @intCast(height),
             .depth = 1,
         },
     };
@@ -1562,7 +1564,7 @@ pub fn copyBufferToImage(device: *const Device, command_pool: c.VkCommandPool, b
     try endSingleTimeCommands(device, command_pool, command_buffer);
 }
 
-pub fn createTextureSampler( device: *const Device) !c.VkSampler {
+pub fn createTextureSampler(device: *const Device) !c.VkSampler {
     var properties = c.VkPhysicalDeviceProperties{};
     c.vkGetPhysicalDeviceProperties(device.physical_device, &properties);
 

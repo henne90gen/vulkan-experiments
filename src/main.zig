@@ -106,7 +106,7 @@ pub fn main() !void {
         sync_objects_list[i] = sync_objects;
     }
 
-    const texture_image = try vk.createTextureImage(&device, command_pool, bitmap.pixels, @intCast(bitmap.width), @intCast(bitmap.height), 3);
+    const texture_image = try vk.createTextureImage(&device, command_pool, bitmap.pixels, bitmap.width, bitmap.height, bitmap.bytes_per_pixel);
     defer texture_image.deinit(&device);
 
     const texture_sampler = try vk.createTextureSampler(&device);
@@ -132,12 +132,12 @@ pub fn main() !void {
 
     const rectangle_vertex_data = [_]models.Vertex{
         // front
-        .{ .position = .{ 0.5, -0.5, 0.0, 1.0 }, .texture_coordinate = .{ 1.0, 1.0, 0.0 }, .normal = .{ 1.0, 1.0, 1.0 } },
-        .{ .position = .{ 0.5, 0.5, 0.0, 1.0 }, .texture_coordinate = .{ 1.0, 0.0, 0.0 }, .normal = .{ 1.0, 1.0, 1.0 } },
-        .{ .position = .{ -0.5, 0.5, 0.0, 1.0 }, .texture_coordinate = .{ 0.0, 0.0, 0.0 }, .normal = .{ 1.0, 1.0, 1.0 } },
-        .{ .position = .{ 0.5, -0.5, 0.0, 1.0 }, .texture_coordinate = .{ 1.0, 1.0, 0.0 }, .normal = .{ 1.0, 1.0, 1.0 } },
-        .{ .position = .{ -0.5, 0.5, 0.0, 1.0 }, .texture_coordinate = .{ 0.0, 0.0, 0.0 }, .normal = .{ 1.0, 1.0, 1.0 } },
-        .{ .position = .{ -0.5, -0.5, 0.0, 1.0 }, .texture_coordinate = .{ 0.0, 1.0, 0.0 }, .normal = .{ 1.0, 1.0, 1.0 } },
+        .{ .position = .{ 0.5, -0.5, 0.0, 1.0 }, .texture_coordinate = .{ 0.0, 1.0, 0.0 }, .normal = .{ 1.0, 1.0, 1.0 } },
+        .{ .position = .{ 0.5, 0.5, 0.0, 1.0 }, .texture_coordinate = .{ 0.0, 0.0, 0.0 }, .normal = .{ 1.0, 1.0, 1.0 } },
+        .{ .position = .{ -0.5, 0.5, 0.0, 1.0 }, .texture_coordinate = .{ 1.0, 0.0, 0.0 }, .normal = .{ 1.0, 1.0, 1.0 } },
+        .{ .position = .{ 0.5, -0.5, 0.0, 1.0 }, .texture_coordinate = .{ 0.0, 1.0, 0.0 }, .normal = .{ 1.0, 1.0, 1.0 } },
+        .{ .position = .{ -0.5, 0.5, 0.0, 1.0 }, .texture_coordinate = .{ 1.0, 0.0, 0.0 }, .normal = .{ 1.0, 1.0, 1.0 } },
+        .{ .position = .{ -0.5, -0.5, 0.0, 1.0 }, .texture_coordinate = .{ 1.0, 1.0, 0.0 }, .normal = .{ 1.0, 1.0, 1.0 } },
 
         // back
         .{ .position = .{ 0.5, -0.5, 0.0, 1.0 }, .texture_coordinate = .{ 1.0, 1.0, 0.0 }, .normal = .{ 1.0, 1.0, 1.0 } },
@@ -213,10 +213,6 @@ pub fn main() !void {
             },
         };
         vk.c.vkUpdateDescriptorSets(device.device, descriptor_write.len, &descriptor_write[0], 0, null);
-    }
-
-    if (true) {
-        return;
     }
 
     var rotation: f32 = 0.0;
@@ -468,6 +464,10 @@ pub fn recordCommandBuffer(
     vk.c.vkCmdBindDescriptorSets(command_buffer, vk.c.VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline.pipeline_layout, 0, 1, &descriptor_set, 0, null);
 
     for (0..vertex_buffers.len) |i| {
+        if (i != 0) {
+            break;
+        }
+
         const vk_vertex_buffers = [_]vk.c.VkBuffer{vertex_buffers[i]};
         const offsets = [_]vk.c.VkDeviceSize{0};
         vk.c.vkCmdBindVertexBuffers(command_buffer, 0, 1, &vk_vertex_buffers, &offsets);

@@ -51,9 +51,13 @@ pub const Model = struct {
                 idx += 1;
             }
 
-            const line = file_content[last_line_start..idx];
+            var line = file_content[last_line_start..idx];
             if (line.len < 3) {
                 continue;
+            }
+
+            if (line[line.len - 1] == '\r') {
+                line = line[0 .. line.len - 1];
             }
 
             if (std.mem.eql(u8, "v ", line[0..2])) {

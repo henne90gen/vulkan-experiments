@@ -1,4 +1,7 @@
 # Vulkan Example Project
 
-vulkan-validation-layers
-vulkan-utility-libraries
+## Dependencies
+
+```sh
+pacman -S vulkan-validation-layers vulkan-utility-libraries
+```

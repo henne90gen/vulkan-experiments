@@ -3,6 +3,7 @@ const std = @import("std");
 pub const Bitmap = struct {
     width: usize,
     height: usize,
+    bytes_per_pixel: usize,
     pixels: []const u8, // RGBA format
 
     pub fn from_memory(gpa: std.mem.Allocator, file_content: []const u8) !Bitmap {
@@ -17,26 +18,33 @@ pub const Bitmap = struct {
         }
 
         const bytes_per_pixel = bitmap_info.bits_per_pixel / 8;
-        const pixels = try gpa.alloc(u8, @intCast(bytes_per_pixel * bitmap_info.width * bitmap_info.height));
+        const dst_bytes_per_pixel = 4;
+        const pixels = try gpa.alloc(u8, @intCast(dst_bytes_per_pixel * bitmap_info.width * bitmap_info.height));
+
+        const color_table = [_]i32{ 2, 1, 0 };
 
         const row_size = @divFloor(bitmap_info.width * bitmap_info.bits_per_pixel + 31, 32) * 4;
         for (0..@intCast(bitmap_info.height)) |row| {
             for (0..@intCast(bitmap_info.width)) |col| {
+                const row_: i32 = @intCast(row);
+                const col_: i32 = @intCast(col);
                 for (0..bytes_per_pixel) |bpp_idx| {
                     const data_offset: i32 = @intCast(header.data_offset);
-                    const row_: i32 = @intCast(row);
-                    const col_: i32 = @intCast(col);
                     const bpp_idx_: i32 = @intCast(bpp_idx);
                     const src_idx = data_offset + row_ * row_size + col_ * bytes_per_pixel + bpp_idx_;
-                    const dst_idx = row_ * bitmap_info.width * bytes_per_pixel + col_ * bytes_per_pixel + bpp_idx_;
+                    const dst_idx = (bitmap_info.height - row_ - 1) * bitmap_info.width * dst_bytes_per_pixel + col_ * dst_bytes_per_pixel + color_table[@intCast(bpp_idx_)];
                     pixels[@intCast(dst_idx)] = file_content[@intCast(src_idx)];
                 }
+
+                const dst_idx = row_ * bitmap_info.width * dst_bytes_per_pixel + col_ * dst_bytes_per_pixel + 3;
+                pixels[@intCast(dst_idx)] = 255;
             }
         }
 
         return Bitmap{
             .width = @intCast(bitmap_info.width),
             .height = @intCast(bitmap_info.height),
+            .bytes_per_pixel = 4,
             .pixels = pixels,
         };
     }
@@ -110,8 +118,9 @@ test "load bmp file from memory" {
 
     try t.expectEqual(762, bmp.width);
     try t.expectEqual(1309, bmp.height);
-    try t.expectEqual(2992374, bmp.pixels.len);
-    try t.expectEqual(0xFF, bmp.pixels[0]); // B
+    try t.expectEqual(3989832, bmp.pixels.len);
+    try t.expectEqual(0xFF, bmp.pixels[0]); // R
     try t.expectEqual(0xFF, bmp.pixels[1]); // G
-    try t.expectEqual(0xFF, bmp.pixels[2]); // R
+    try t.expectEqual(0xFF, bmp.pixels[2]); // B
+    try t.expectEqual(0xFF, bmp.pixels[3]); // A
 }
