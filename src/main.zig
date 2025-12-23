@@ -4,10 +4,12 @@ const zm = @import("zmath");
 const glfw = @import("glfw.zig");
 const vk = @import("vulkan.zig");
 const models = @import("models.zig");
+const bmp = @import("bitmap.zig");
 
 const shader_vert = @embedFile("shader.vert.spv");
 const shader_frag = @embedFile("shader.frag.spv");
-const suzanne = @embedFile("models/suzanne.obj");
+const suzanne = @embedFile("assets/suzanne.obj");
+const greenland_grid_velo = @embedFile("assets/greenland_grid_velo.bmp");
 
 const MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -67,6 +69,9 @@ pub fn main() !void {
 
     const model = try models.Model.from_memory(gpa, suzanne);
     defer model.deinit(gpa);
+
+    const bitmap = try bmp.Bitmap.from_memory(gpa, greenland_grid_velo);
+    defer bitmap.deinit(gpa);
 
     const descriptor_set_layout = try vk.createDescriptorSetLayout(&device);
     defer vk.destroyDescriptorSetLayout(&device, descriptor_set_layout);
@@ -344,5 +349,5 @@ fn drawFrame(
 }
 
 test {
-    std.testing.refAllDecls(@This());
+    std.testing.refAllDeclsRecursive(@This());
 }

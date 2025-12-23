@@ -4,11 +4,7 @@ const models = @import("models.zig");
 
 const t = std.testing;
 test "loads simple triangle model" {
-    var allocator = std.heap.DebugAllocator(.{}){};
-    defer _ = allocator.deinit();
-    const gpa = allocator.allocator();
-
-    const model = try models.Model.from_memory(gpa,
+    const model = try models.Model.from_memory(t.allocator,
         \\v 0.0 -0.5 0.0
         \\v 0.5 0.5 0.0
         \\v -0.5 0.5 0.0
@@ -20,7 +16,7 @@ test "loads simple triangle model" {
         \\vn 0.0 0.0 1.0
         \\f 1/1/1 2/2/2 3/3/3
     );
-    defer model.deinit(gpa);
+    defer model.deinit(t.allocator);
 
     try t.expectEqual(3, model.vertices.len);
     try t.expectEqual(0.0, model.vertices[0][0]);
@@ -54,7 +50,7 @@ test "loads simple triangle model" {
 
     try t.expectEqual(1, model.faces.len);
 
-    const data = try model.to_interleaved_data(gpa);
-    defer gpa.free(data);
+    const data = try model.to_interleaved_data(t.allocator);
+    defer t.allocator.free(data);
     try t.expectEqual(3, data.len);
 }
