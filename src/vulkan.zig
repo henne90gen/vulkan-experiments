@@ -258,11 +258,10 @@ pub fn createInstance(gpa: std.mem.Allocator, required_extensions: [][*:0]const 
         const validation_layer_name = "VK_LAYER_KHRONOS_validation";
         if (!try checkValidationLayerSupport(gpa, validation_layer_name)) {
             std.debug.print("Missing '{s}'. Install vulkan validation layers (e.g. 'sudo pacman -S vulkan-validation-layers')\n", .{validation_layer_name});
-            return error.VulkanValidationLayerNotAvailable;
+        } else {
+            create_info.enabledLayerCount = 1;
+            create_info.ppEnabledLayerNames = @ptrCast(&validation_layer_name);
         }
-
-        create_info.enabledLayerCount = 1;
-        create_info.ppEnabledLayerNames = @ptrCast(&validation_layer_name);
     }
 
     var instance: c.VkInstance = null;
@@ -271,6 +270,7 @@ pub fn createInstance(gpa: std.mem.Allocator, required_extensions: [][*:0]const 
         std.debug.print("Failed to create vulkan instance: {s}\n", .{c.string_VkResult(result)});
         return error.VulkanInstanceCreationFailed;
     }
+
     return instance;
 }
 
@@ -282,6 +282,11 @@ fn checkValidationLayerSupport(gpa: std.mem.Allocator, layer_name: [:0]const u8)
     var layer_count: u32 = 0;
     if (c.vkEnumerateInstanceLayerProperties(&layer_count, null) != c.VK_SUCCESS) {
         return error.VulkanLayerEnumerationFailed;
+    }
+
+    if (layer_count == 0) {
+        std.debug.print("Validation layers are not supported\n", .{});
+        return false;
     }
 
     var available_layers = try gpa.alloc(c.VkLayerProperties, layer_count);
@@ -366,7 +371,14 @@ fn pickPhysicalDevice(gpa: std.mem.Allocator, instance: c.VkInstance, surface: c
         const isSuitable = try isDeviceSuitable(gpa, device, surface);
         var device_properties: c.VkPhysicalDeviceProperties = undefined;
         c.vkGetPhysicalDeviceProperties(device, &device_properties);
-        const device_name: [:0]const u8 = @ptrCast(&device_properties.deviceName);
+        var device_name_len: usize = 0;
+        for (0..device_properties.deviceName.len) |i| {
+            if (device_properties.deviceName[i] == 0) {
+                device_name_len = i;
+                break;
+            }
+        }
+        const device_name = device_properties.deviceName[0..device_name_len];
         std.debug.print("  - {s} (suitable={})\n", .{ device_name, isSuitable });
         if (isSuitable) {
             std.debug.print("Selected GPU: {s}\n", .{device_name});

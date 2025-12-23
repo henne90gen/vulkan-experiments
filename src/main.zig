@@ -11,8 +11,6 @@ test {
     std.testing.refAllDeclsRecursive(@This());
 }
 
-const INITIAL_GEOMETRY_INSTANCE_COUNT = 1;
-
 const WindowState = struct {
     allocator: std.mem.Allocator,
     zoom: f32,
@@ -97,13 +95,8 @@ pub fn main() !void {
 
     try vk.mapMemory(&renderer.device, rectangle_vertex_buffer_memory, @ptrCast(&rectangle_vertex_data));
 
-    var current_geometry_instance_count: usize = INITIAL_GEOMETRY_INSTANCE_COUNT;
-    var instance_buffer_size = @sizeOf(rd.GeometryInstance) * current_geometry_instance_count;
-    var instance_buffer = try vk.createBuffer(&renderer.device, vk.c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, instance_buffer_size);
-    defer vk.destroyBuffer(&renderer.device, instance_buffer);
-
-    var instance_buffer_memory = try vk.createBufferMemory(&renderer.device, instance_buffer, vk.c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    defer vk.destroyBufferMemory(&renderer.device, instance_buffer_memory);
+    var instance_buffer = try rd.InstanceBuffer.init(&renderer.device);
+    defer instance_buffer.deinit();
 
     const per_frame_vk_data = try renderer.createPerFrameVkData();
     defer renderer.destroyPerFrameVkData(per_frame_vk_data);
@@ -113,7 +106,7 @@ pub fn main() !void {
     var current_frame: u32 = 0;
     while (!glfw.windowShouldClose(window)) {
         glfw.pollEvents();
-        const start = std.time.nanoTimestamp();
+        const start_time = std.time.nanoTimestamp();
 
         const new_framebuffer_size = glfw.getFramebufferSize(window);
 
@@ -155,17 +148,45 @@ pub fn main() !void {
             }
         }
 
-        if (geometry_instances.items.len > current_geometry_instance_count) {
-            _ = vk.c.vkDeviceWaitIdle(renderer.device.device);
-
-            current_geometry_instance_count = geometry_instances.items.len;
-            vk.destroyBufferMemory(&renderer.device, instance_buffer_memory);
-            vk.destroyBuffer(&renderer.device, instance_buffer);
-            instance_buffer_size = geometry_instances.items.len * @sizeOf(rd.GeometryInstance);
-            instance_buffer = try vk.createBuffer(&renderer.device, vk.c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, instance_buffer_size);
-            instance_buffer_memory = try vk.createBufferMemory(&renderer.device, instance_buffer, vk.c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        switch (window_state.mode) {
+            .creating_line => |*line_data| {
+                if (line_data.start) |start| {
+                    const mousePosition = glfw.getMousePosition(window);
+                    const end = mapMousePositionToObjectSpace(window, &window_state, mousePosition);
+                    const sx = start[0];
+                    const sy = start[1];
+                    const ex = end[0];
+                    const ey = end[1];
+                    const distance = zm.sqrt((ex - sx) * (ex - sx) + (ey - sy) * (ey - sy));
+                    const midpoint = [2]f32{
+                        (sx + ex) * 0.5,
+                        (sy + ey) * 0.5,
+                    };
+                    const angle = std.math.atan2(ey - sy, ex - sx);
+                    try geometry_instances.append(allocator, .{
+                        .geometry_type = 1,
+                        .rotation = angle,
+                        .translation = midpoint,
+                        .scale = [2]f32{ distance, 0.5 },
+                    });
+                    try geometry_instances.append(allocator, .{
+                        .geometry_type = 0,
+                        .rotation = 0.0,
+                        .translation = start,
+                        .scale = [2]f32{ 1.0, 1.0 },
+                    });
+                    try geometry_instances.append(allocator, .{
+                        .geometry_type = 0,
+                        .rotation = 0.0,
+                        .translation = end,
+                        .scale = [2]f32{ 1.0, 1.0 },
+                    });
+                }
+            },
+            else => {},
         }
-        try vk.mapMemory(&renderer.device, instance_buffer_memory, @ptrCast(geometry_instances.items));
+
+        try instance_buffer.update(@ptrCast(geometry_instances.items));
 
         const vk_data = per_frame_vk_data[current_frame];
         try renderer.drawFrame(
@@ -174,14 +195,14 @@ pub fn main() !void {
             &ubo,
             rectangle_vertex_buffer,
             rectangle_vertex_data.len,
-            instance_buffer,
+            instance_buffer.instance_buffer,
             geometry_instances.items.len,
         );
 
         current_frame = (current_frame + 1) % @as(u32, @intCast(per_frame_vk_data.len));
 
-        const end = std.time.nanoTimestamp();
-        const frame_time_ns = end - start;
+        const end_time = std.time.nanoTimestamp();
+        const frame_time_ns = end_time - start_time;
         const frame_time_ms = @as(f32, @floatFromInt(frame_time_ns)) / 1_000_000.0;
         const new_title = try std.fmt.allocPrintSentinel(allocator, "Vulkan - Frame time: {d:.2} ms - {d:.2} fps", .{ frame_time_ms, 1000.0 / frame_time_ms }, 0);
         defer allocator.free(new_title);
@@ -284,14 +305,14 @@ fn createLine(window: *glfw.c.GLFWwindow, button: i32, action: i32, window_state
     const scaled = mapMousePositionToObjectSpace(window, window_state, mousePosition);
 
     if (line_data.start) |start| {
-        window_state.primitives.append(window_state.allocator, .{ .point = start }) catch {
-            std.debug.print("Failed to append point\n", .{});
-        };
         window_state.primitives.append(window_state.allocator, .{ .line = .{
             .start = start,
             .end = scaled,
         } }) catch {
             std.debug.print("Failed to append line\n", .{});
+        };
+        window_state.primitives.append(window_state.allocator, .{ .point = start }) catch {
+            std.debug.print("Failed to append point\n", .{});
         };
         window_state.primitives.append(window_state.allocator, .{ .point = scaled }) catch {
             std.debug.print("Failed to append point\n", .{});
@@ -357,8 +378,8 @@ export fn cursorPosCallback(window: ?*glfw.c.GLFWwindow, xpos: f64, ypos: f64) v
 
                 // TODO this does not quite work yet
                 std.debug.print("Cursor position: ({}, {}) -> ({}, {}) -> ({}, {})\n", .{ xpos, ypos, scaled[0], scaled[1], delta_x, delta_y });
-                window_state.?.center[0] -= @floatCast(delta_x);
-                window_state.?.center[1] -= @floatCast(delta_y);
+                window_state.?.center[0] -= delta_x;
+                window_state.?.center[1] -= delta_y;
             }
         },
         else => {},

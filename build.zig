@@ -32,18 +32,25 @@ pub fn build(b: *std.Build) !void {
 
     // Vulkan
     const vulkan_sdk_path = b.option([]const u8, "vulkan-sdk-path", "Path to Vulkan SDK");
-    if (vulkan_sdk_path == null and builtin.os.tag == .windows) {
+    if (vulkan_sdk_path == null and target.result.os.tag == .windows) {
         std.debug.print("Missing required option -Dvulkan-sdk-path", .{});
         return error.MissingVulkanSDKPath;
     }
     if (vulkan_sdk_path != null) {
-        exe.root_module.addIncludePath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/include", .{vulkan_sdk_path.?}) });
-        exe.root_module.addLibraryPath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/lib", .{vulkan_sdk_path.?}) });
+        switch (target.result.os.tag) {
+            .windows => {
+                exe.root_module.addIncludePath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/Include", .{vulkan_sdk_path.?}) });
+                exe.root_module.addLibraryPath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/Lib", .{vulkan_sdk_path.?}) });
+            },
+            else => {
+                exe.root_module.addIncludePath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/include", .{vulkan_sdk_path.?}) });
+                exe.root_module.addLibraryPath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/lib", .{vulkan_sdk_path.?}) });
+            },
+        }
     }
-    if (builtin.os.tag == .windows) {
-        exe.root_module.linkSystemLibrary("vulkan-1", .{});
-    } else {
-        exe.root_module.linkSystemLibrary("vulkan", .{});
+    switch (target.result.os.tag) {
+        .windows => exe.root_module.linkSystemLibrary("vulkan-1", .{}),
+        else => exe.root_module.linkSystemLibrary("vulkan", .{}),
     }
 
     // zmath

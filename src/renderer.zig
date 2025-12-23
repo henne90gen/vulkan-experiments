@@ -29,9 +29,13 @@ pub const Renderer = struct {
     texture_sampler: vk.c.VkSampler,
 
     pub fn init(allocator: std.mem.Allocator, window: *glfw.c.GLFWwindow) !Renderer {
+        std.debug.print("Initializing renderer\n", .{});
+
         const requiredExtensions = glfw.getRequiredInstanceExtensions();
         const instance = try vk.createInstance(allocator, requiredExtensions);
         errdefer vk.destroyInstance(instance);
+
+        std.debug.print("  created instance\n", .{});
 
         const debug_messenger = try vk.setupDebugMessenger(instance);
         errdefer vk.destroyDebugMessenger(instance, debug_messenger);
@@ -39,19 +43,23 @@ pub const Renderer = struct {
         const surface = createWindowSurface(instance, window);
         errdefer vk.destroySurface(instance, surface);
 
+        std.debug.print("  created surface\n", .{});
+
         const device = try vk.Device.init(allocator, instance, surface);
         errdefer device.deinit();
+
+        std.debug.print("  created device\n", .{});
 
         const framebuffer_size = glfw.getFramebufferSize(window);
         const swap_chain = try vk.SwapChain.init(allocator, &device, surface, .{ .width = @intCast(framebuffer_size.width), .height = @intCast(framebuffer_size.height) });
         errdefer swap_chain.deinit(allocator, &device);
 
-        std.debug.print("Swap chain images count: {}\n", .{swap_chain.images.len});
+        std.debug.print("  created swap chain with {} images\n", .{swap_chain.images.len});
 
         const image_views = try vk.createImageViews(allocator, &device, &swap_chain);
         errdefer vk.destroyImageViews(allocator, &device, image_views);
 
-        std.debug.print("Image views count: {}\n", .{image_views.len});
+        std.debug.print("  created {} image views\n", .{image_views.len});
 
         const descriptor_set_layout = try vk.createDescriptorSetLayout(&device);
         errdefer vk.destroyDescriptorSetLayout(&device, descriptor_set_layout);
@@ -62,6 +70,8 @@ pub const Renderer = struct {
         const descriptor_sets = try vk.createDescriptorSets(allocator, &device, descriptor_pool, descriptor_set_layout, MAX_FRAMES_IN_FLIGHT);
         errdefer vk.destroyDescriptorSets(allocator, descriptor_sets);
 
+        std.debug.print("  created descriptors\n", .{});
+
         const vertex_desription = vertexDescription();
         const pipeline = try vk.createGraphicsPipeline(allocator, &device, &swap_chain, shader_vert, shader_frag, descriptor_set_layout, vertex_desription);
         errdefer pipeline.deinit(&device);
@@ -71,6 +81,8 @@ pub const Renderer = struct {
 
         const framebuffers = try vk.createFramebuffers(allocator, &device, &pipeline, &swap_chain, image_views, &depth_image);
         errdefer vk.destroyFramebuffers(allocator, &device, framebuffers);
+
+        std.debug.print("  created framebuffers\n", .{});
 
         const command_pool = try vk.createCommandPool(allocator, surface, &device);
         errdefer vk.destroyCommandPool(&device, command_pool);
@@ -83,6 +95,8 @@ pub const Renderer = struct {
 
         const texture_sampler = try vk.createTextureSampler(&device);
         errdefer vk.destroyTextureSampler(&device, texture_sampler);
+
+        std.debug.print("Initializing renderer - done\n", .{});
 
         return Renderer{
             .allocator = allocator,
@@ -373,6 +387,48 @@ pub const Renderer = struct {
         self.image_views = result.image_views;
         self.depth_image = result.depth_image;
         self.framebuffers = result.framebuffers;
+    }
+};
+
+const INITIAL_GEOMETRY_INSTANCE_COUNT = 1;
+
+pub const InstanceBuffer = struct {
+    device: *const vk.Device = undefined,
+    instance_buffer_size: usize = 0,
+    instance_buffer: vk.c.VkBuffer = undefined,
+    instance_buffer_memory: vk.c.VkDeviceMemory = undefined,
+
+    pub fn init(device: *const vk.Device) !InstanceBuffer {
+        const instance_buffer_size = @sizeOf(GeometryInstance) * INITIAL_GEOMETRY_INSTANCE_COUNT;
+        const instance_buffer = try vk.createBuffer(device, vk.c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, instance_buffer_size);
+        errdefer vk.destroyBuffer(device, instance_buffer);
+        const instance_buffer_memory = try vk.createBufferMemory(device, instance_buffer, vk.c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        return InstanceBuffer{
+            .device = device,
+            .instance_buffer_size = instance_buffer_size,
+            .instance_buffer = instance_buffer,
+            .instance_buffer_memory = instance_buffer_memory,
+        };
+    }
+
+    pub fn deinit(self: *InstanceBuffer) void {
+        vk.destroyBufferMemory(self.device, self.instance_buffer_memory);
+        vk.destroyBuffer(self.device, self.instance_buffer);
+    }
+
+    pub fn update(self: *InstanceBuffer, data: []const f32) !void {
+        const data_size = @sizeOf(f32) * data.len;
+        if (data_size > self.instance_buffer_size) {
+            _ = vk.c.vkDeviceWaitIdle(self.device.device);
+
+            vk.destroyBufferMemory(self.device, self.instance_buffer_memory);
+            vk.destroyBuffer(self.device, self.instance_buffer);
+
+            self.instance_buffer_size = data_size;
+            self.instance_buffer = try vk.createBuffer(self.device, vk.c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, self.instance_buffer_size);
+            self.instance_buffer_memory = try vk.createBufferMemory(self.device, self.instance_buffer, vk.c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        }
+        try vk.mapMemory(self.device, self.instance_buffer_memory, data);
     }
 };
 
