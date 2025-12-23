@@ -23,7 +23,9 @@ jobs:
       - if: startsWith(matrix.os, 'linux')
         run: zig build -Dvulkan-sdk-path="$VULKAN_SDK"
       - if: startsWith(matrix.os, 'windows')
-        run: zig build -Dvulkan-sdk-path="$env:VULKAN_SDK"
+        run: |
+          tree "$env:VULKAN_SDK"
+          zig build -Dvulkan-sdk-path="$env:VULKAN_SDK"
 
       - if: startsWith(matrix.os, 'linux')
         run: zig build -Dvulkan-sdk-path="$VULKAN_SDK" test
