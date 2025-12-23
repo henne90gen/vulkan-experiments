@@ -6,6 +6,8 @@ const vk = @import("vulkan.zig");
 const shader_vert = @embedFile("shader.vert.spv");
 const shader_frag = @embedFile("shader.frag.spv");
 
+const MAX_FRAMES_IN_FLIGHT = 2;
+
 pub fn main() !void {
     var allocator = std.heap.DebugAllocator(.{}){};
     defer {
@@ -59,16 +61,36 @@ pub fn main() !void {
     const command_pool = try vk.createCommandPool(gpa, physical_device, surface, &device);
     defer vk.destroyCommandPool(&device, command_pool);
 
-    const command_buffer = try vk.createCommandBuffer(&device, command_pool);
-    defer vk.destroyCommandBuffer(&device, command_pool, command_buffer);
+    var command_buffers = [_]vk.c.VkCommandBuffer{undefined} ** MAX_FRAMES_IN_FLIGHT;
+    var sync_objects_list = [_]vk.SyncObjects{undefined} ** MAX_FRAMES_IN_FLIGHT;
+    defer {
+        for (0..MAX_FRAMES_IN_FLIGHT) |i| {
+            vk.destroyCommandBuffer(&device, command_pool, command_buffers[i]);
+            sync_objects_list[i].deinit(&device);
+        }
+    }
+    for (0..MAX_FRAMES_IN_FLIGHT) |i| {
+        const command_buffer = try vk.createCommandBuffer(&device, command_pool);
+        command_buffers[i] = command_buffer;
 
-    const sync_objects = try vk.createSyncObjects(&device);
-    defer sync_objects.deinit(&device);
+        const sync_objects = try vk.createSyncObjects(&device);
+        sync_objects_list[i] = sync_objects;
+    }
 
+    var current_frame: u32 = 0;
     while (!glfw.windowShouldClose(window)) {
         glfw.pollEvents();
 
-        const should_recreate_swap_chain = try drawFrame(&device, &sync_objects, &swap_chain, &pipeline, framebuffers, command_buffer);
+        const command_buffer = command_buffers[current_frame];
+        const sync_objects = &sync_objects_list[current_frame];
+        const should_recreate_swap_chain = try drawFrame(
+            &device,
+            &swap_chain,
+            &pipeline,
+            framebuffers,
+            command_buffer,
+            sync_objects,
+        );
         if (should_recreate_swap_chain) {
             const result = try vk.recreateSwapChain(
                 gpa,
@@ -84,6 +106,8 @@ pub fn main() !void {
             image_views = result.image_views;
             framebuffers = result.framebuffers;
         }
+
+        current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
 
     const err = vk.c.vkDeviceWaitIdle(device.device);
@@ -114,11 +138,11 @@ fn createWindowSurface(instance: vk.c.VkInstance, window: *glfw.c.GLFWwindow) vk
 
 fn drawFrame(
     device: *const vk.Device,
-    sync_objects: *const vk.SyncObjects,
     swap_chain: *const vk.SwapChain,
     pipeline: *const vk.Pipeline,
     framebuffers: []vk.c.VkFramebuffer,
     command_buffer: vk.c.VkCommandBuffer,
+    sync_objects: *const vk.SyncObjects,
 ) !bool {
     const start = std.time.nanoTimestamp();
 
