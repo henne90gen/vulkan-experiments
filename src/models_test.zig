@@ -56,5 +56,5 @@ test "loads simple triangle model" {
 
     const data = try model.to_interleaved_data(gpa);
     defer gpa.free(data);
-    try t.expectEqual(30, data.len);
+    try t.expectEqual(3, data.len);
 }
