@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const vk = @import("vulkan.zig");
+
 test {
     _ = @import("models_test.zig");
 }
@@ -14,6 +16,12 @@ const Face = struct {
         gpa.free(self.texture_coordinates);
         gpa.free(self.normals);
     }
+};
+
+const Vertex = struct {
+    position: [4]f32,
+    texture_coordinate: [3]f32,
+    normal: [3]f32,
 };
 
 pub const Model = struct {
@@ -137,39 +145,81 @@ pub const Model = struct {
         gpa.free(self.faces);
     }
 
-    pub fn to_interleaved_data(self: *const Model, gpa: std.mem.Allocator) ![]f32 {
-        var float_count: usize = 0;
+    pub fn to_interleaved_data(self: *const Model, gpa: std.mem.Allocator) ![]Vertex {
+        var vertex_count: usize = 0;
         for (self.faces) |face| {
-            float_count += face.vertices.len * (4 + 3 + 3);
+            vertex_count += face.vertices.len;
         }
 
-        var interleaved = try std.ArrayList(f32).initCapacity(gpa, float_count);
+        var interleaved = try std.ArrayList(Vertex).initCapacity(gpa, vertex_count);
         errdefer interleaved.deinit(gpa);
 
         for (self.faces) |face| {
             for (0..face.vertices.len) |idx| {
                 const v_idx = face.vertices[idx];
                 const vertex = self.vertices[@intCast(v_idx)];
-                try interleaved.append(gpa, vertex[0]);
-                try interleaved.append(gpa, vertex[1]);
-                try interleaved.append(gpa, vertex[2]);
-                try interleaved.append(gpa, vertex[3]);
-
                 const tc_idx = face.texture_coordinates[idx];
                 const texture_coordinate = self.texture_coordinates[@intCast(tc_idx)];
-                try interleaved.append(gpa, texture_coordinate[0]);
-                try interleaved.append(gpa, texture_coordinate[1]);
-                try interleaved.append(gpa, texture_coordinate[2]);
-
                 const n_idx = face.texture_coordinates[idx];
                 const normal = self.texture_coordinates[@intCast(n_idx)];
-                try interleaved.append(gpa, normal[0]);
-                try interleaved.append(gpa, normal[1]);
-                try interleaved.append(gpa, normal[2]);
+                try interleaved.append(gpa, .{
+                    .position = vertex,
+                    .texture_coordinate = texture_coordinate,
+                    .normal = normal,
+                });
             }
         }
 
         return interleaved.toOwnedSlice(gpa);
+    }
+
+    pub fn vertex_description(_: *const Model) vk.VertexDescription {
+        const stride = @sizeOf(f32) * 10;
+        const new_stride = @sizeOf(Vertex);
+        std.debug.print("stride: {d} vs {d}\n", .{ stride, new_stride });
+        const position_offset = 0;
+        const texture_coordinate_offset = @sizeOf(f32) * 4;
+        const normal_offset = @sizeOf(f32) * 7;
+        const new_position_offset = @offsetOf(Vertex, "position");
+        const new_texture_coordinate_offset = @offsetOf(Vertex, "texture_coordinate");
+        const new_normal_offset = @offsetOf(Vertex, "normal");
+        std.debug.print("offsets: {d},{d},{d} vs {d},{d},{d}\n", .{
+            position_offset,
+            texture_coordinate_offset,
+            normal_offset,
+            new_position_offset,
+            new_texture_coordinate_offset,
+            new_normal_offset,
+        });
+        return .{
+            .binding_descriptions = &[_]vk.c.VkVertexInputBindingDescription{
+                .{
+                    .binding = 0,
+                    .stride = stride,
+                    .inputRate = vk.c.VK_VERTEX_INPUT_RATE_VERTEX,
+                },
+            },
+            .attribute_descriptions = &[_]vk.c.VkVertexInputAttributeDescription{
+                .{
+                    .binding = 0,
+                    .location = 0,
+                    .format = vk.c.VK_FORMAT_R32G32B32A32_SFLOAT,
+                    .offset = @offsetOf(Vertex, "position"),
+                },
+                .{
+                    .binding = 0,
+                    .location = 1,
+                    .format = vk.c.VK_FORMAT_R32G32B32_SFLOAT,
+                    .offset = @offsetOf(Vertex, "texture_coordinate"),
+                },
+                .{
+                    .binding = 0,
+                    .location = 2,
+                    .format = vk.c.VK_FORMAT_R32G32B32_SFLOAT,
+                    .offset = @offsetOf(Vertex, "normal"),
+                },
+            },
+        };
     }
 };
 

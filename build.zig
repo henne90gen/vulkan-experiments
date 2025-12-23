@@ -45,6 +45,10 @@ pub fn build(b: *std.Build) !void {
         exe.root_module.linkSystemLibrary("vulkan", .{});
     }
 
+    // zmath
+    const zmath = b.dependency("zmath", .{});
+    exe.root_module.addImport("zmath", zmath.module("root"));
+
     b.installArtifact(exe);
 
     const glslc_vert = b.addSystemCommand(&.{"glslc"});

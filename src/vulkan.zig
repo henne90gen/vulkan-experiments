@@ -84,6 +84,23 @@ pub const SyncObjects = struct {
     }
 };
 
+pub const VertexDescription = struct {
+    binding_descriptions: []const c.VkVertexInputBindingDescription,
+    attribute_descriptions: []const c.VkVertexInputAttributeDescription,
+};
+
+pub const Image = struct {
+    image: c.VkImage,
+    memory: c.VkDeviceMemory,
+    image_view: ?c.VkImageView,
+
+    pub fn deinit(self: *const Image, device: *const Device) void {
+        c.vkDestroyImage(device.device, self.image, null);
+        c.vkFreeMemory(device.device, self.memory, null);
+        c.vkDestroyImageView(device.device, self.image_view.?, null);
+    }
+};
+
 pub fn createInstance(gpa: std.mem.Allocator, required_extensions: [][*:0]const u8) !c.VkInstance {
     var app_info = c.VkApplicationInfo{};
     app_info.sType = c.VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -545,37 +562,46 @@ pub fn createImageViews(gpa: std.mem.Allocator, device: *const Device, swap_chai
     var image_views = try gpa.alloc(c.VkImageView, swap_chain.images.len);
     errdefer gpa.free(image_views);
     for (0..swap_chain.images.len) |i| {
-        const create_info = c.VkImageViewCreateInfo{
-            .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-            .image = swap_chain.images[i],
-            .viewType = c.VK_IMAGE_VIEW_TYPE_2D,
-            .format = swap_chain.surface_format.format,
-            .components = .{
-                .r = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-                .g = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-                .b = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-                .a = c.VK_COMPONENT_SWIZZLE_IDENTITY,
-            },
-            .subresourceRange = .{
-                .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
-                .baseMipLevel = 0,
-                .levelCount = 1,
-                .baseArrayLayer = 0,
-                .layerCount = 1,
-            },
-        };
-
-        const err = c.vkCreateImageView(device.device, &create_info, null, &image_views[i]);
-        if (err != c.VK_SUCCESS) {
-            std.debug.print("Failed to create image view: {s}\n", .{c.string_VkResult(err)});
+        image_views[i] = try createImageView(device, swap_chain.images[i], swap_chain.surface_format.format, c.VK_IMAGE_ASPECT_COLOR_BIT);
+        errdefer {
             for (0..i) |j| {
                 c.vkDestroyImageView(device.device, image_views[j], null);
             }
-            return error.VulkanImageViewCreationFailed;
         }
     }
 
     return image_views;
+}
+
+fn createImageView(device: *const Device, image: c.VkImage, format: c.VkFormat, aspect_flags: c.VkImageAspectFlags) !c.VkImageView {
+    const create_info = c.VkImageViewCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .image = image,
+        .viewType = c.VK_IMAGE_VIEW_TYPE_2D,
+        .format = format,
+        .components = .{
+            .r = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+            .g = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+            .b = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+            .a = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+        },
+        .subresourceRange = .{
+            .aspectMask = aspect_flags,
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1,
+        },
+    };
+
+    var image_view: c.VkImageView = undefined;
+    const err = c.vkCreateImageView(device.device, &create_info, null, &image_view);
+    if (err != c.VK_SUCCESS) {
+        std.debug.print("Failed to create image view: {s}\n", .{c.string_VkResult(err)});
+        return error.VulkanImageViewCreationFailed;
+    }
+
+    return image_view;
 }
 
 pub fn destroyImageViews(gpa: std.mem.Allocator, device: *const Device, image_views: []c.VkImageView) void {
@@ -585,7 +611,45 @@ pub fn destroyImageViews(gpa: std.mem.Allocator, device: *const Device, image_vi
     gpa.free(image_views);
 }
 
-pub fn createGraphicsPipeline(gpa: std.mem.Allocator, device: *const Device, swap_chain: *const SwapChain, shader_vert: []const u8, shader_frag: []const u8) !Pipeline {
+pub fn createDescriptorSetLayout(device: *const Device) !c.VkDescriptorSetLayout {
+    const ubo_layout_binding = c.VkDescriptorSetLayoutBinding{
+        .binding = 0,
+        .descriptorType = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .descriptorCount = 1,
+        .stageFlags = c.VK_SHADER_STAGE_VERTEX_BIT,
+        .pImmutableSamplers = null,
+    };
+
+    var layout_info = c.VkDescriptorSetLayoutCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = 1,
+        .pBindings = &ubo_layout_binding,
+    };
+
+    var descriptor_set_layout: c.VkDescriptorSetLayout = null;
+    const err = c.vkCreateDescriptorSetLayout(device.device, &layout_info, null, &descriptor_set_layout);
+    if (err != c.VK_SUCCESS) {
+        std.debug.print("Failed to create descriptor set layout: {s}\n", .{c.string_VkResult(err)});
+        return error.VulkanDescriptorSetLayoutCreationFailed;
+    }
+
+    return descriptor_set_layout;
+}
+
+pub fn destroyDescriptorSetLayout(device: *const Device, descriptor_set_layout: c.VkDescriptorSetLayout) void {
+    c.vkDestroyDescriptorSetLayout(device.device, descriptor_set_layout, null);
+}
+
+pub fn createGraphicsPipeline(
+    gpa: std.mem.Allocator,
+    physical_device: c.VkPhysicalDevice,
+    device: *const Device,
+    swap_chain: *const SwapChain,
+    shader_vert: []const u8,
+    shader_frag: []const u8,
+    descriptor_set_layout: c.VkDescriptorSetLayout,
+    vertex_description: VertexDescription,
+) !Pipeline {
     const vert_shader_module = try createShaderModule(gpa, device, shader_vert);
     defer c.vkDestroyShaderModule(device.device, vert_shader_module, null);
 
@@ -622,39 +686,12 @@ pub fn createGraphicsPipeline(gpa: std.mem.Allocator, device: *const Device, swa
         .pDynamicStates = &dynamic_states[0],
     };
 
-    const binding_description = c.VkVertexInputBindingDescription{
-        .binding = 0,
-        .stride = @sizeOf(f32) * 10,
-        .inputRate = c.VK_VERTEX_INPUT_RATE_VERTEX,
-    };
-
-    const attribute_descriptions = [_]c.VkVertexInputAttributeDescription{
-        .{
-            .binding = 0,
-            .location = 0,
-            .format = c.VK_FORMAT_R32G32B32A32_SFLOAT,
-            .offset = 0,
-        },
-        .{
-            .binding = 0,
-            .location = 1,
-            .format = c.VK_FORMAT_R32G32B32_SFLOAT,
-            .offset = @sizeOf(f32) * 4,
-        },
-        .{
-            .binding = 0,
-            .location = 2,
-            .format = c.VK_FORMAT_R32G32B32_SFLOAT,
-            .offset = @sizeOf(f32) * 7,
-        },
-    };
-
     const vertex_input_info = c.VkPipelineVertexInputStateCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-        .vertexBindingDescriptionCount = 1,
-        .vertexAttributeDescriptionCount = attribute_descriptions.len,
-        .pVertexBindingDescriptions = &binding_description,
-        .pVertexAttributeDescriptions = &attribute_descriptions[0],
+        .vertexBindingDescriptionCount = @intCast(vertex_description.binding_descriptions.len),
+        .vertexAttributeDescriptionCount = @intCast(vertex_description.attribute_descriptions.len),
+        .pVertexBindingDescriptions = &vertex_description.binding_descriptions[0],
+        .pVertexAttributeDescriptions = &vertex_description.attribute_descriptions[0],
     };
 
     const input_assembly = c.VkPipelineInputAssemblyStateCreateInfo{
@@ -704,6 +741,19 @@ pub fn createGraphicsPipeline(gpa: std.mem.Allocator, device: *const Device, swa
         .alphaBlendOp = c.VK_BLEND_OP_ADD,
     };
 
+    const depth_stencil_state = c.VkPipelineDepthStencilStateCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+        .depthTestEnable = c.VK_TRUE,
+        .depthWriteEnable = c.VK_TRUE,
+        .depthCompareOp = c.VK_COMPARE_OP_LESS,
+        .depthBoundsTestEnable = c.VK_FALSE,
+        .minDepthBounds = 0.0,
+        .maxDepthBounds = 1.0,
+        .stencilTestEnable = c.VK_FALSE,
+        .front = .{},
+        .back = .{},
+    };
+
     const color_blending = c.VkPipelineColorBlendStateCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
         .logicOpEnable = c.VK_FALSE,
@@ -715,8 +765,8 @@ pub fn createGraphicsPipeline(gpa: std.mem.Allocator, device: *const Device, swa
 
     const pipeline_layout_info = c.VkPipelineLayoutCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = 0,
-        .pSetLayouts = null,
+        .setLayoutCount = 1,
+        .pSetLayouts = &descriptor_set_layout,
         .pushConstantRangeCount = 0,
         .pPushConstantRanges = null,
     };
@@ -728,7 +778,7 @@ pub fn createGraphicsPipeline(gpa: std.mem.Allocator, device: *const Device, swa
         return error.VulkanPipelineLayoutCreationFailed;
     }
 
-    result.render_pass = try createRenderPass(device, swap_chain);
+    result.render_pass = try createRenderPass(physical_device, device, swap_chain);
 
     const pipeline_info = c.VkGraphicsPipelineCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
@@ -739,7 +789,7 @@ pub fn createGraphicsPipeline(gpa: std.mem.Allocator, device: *const Device, swa
         .pViewportState = &viewport_state,
         .pRasterizationState = &rasterizer,
         .pMultisampleState = &multisampling,
-        .pDepthStencilState = null,
+        .pDepthStencilState = &depth_stencil_state,
         .pColorBlendState = &color_blending,
         .pDynamicState = &dynamic_state,
         .layout = result.pipeline_layout,
@@ -778,7 +828,7 @@ fn createShaderModule(gpa: std.mem.Allocator, device: *const Device, code: []con
     return shader_module;
 }
 
-fn createRenderPass(device: *const Device, swap_chain: *const SwapChain) !c.VkRenderPass {
+fn createRenderPass(physical_device: c.VkPhysicalDevice, device: *const Device, swap_chain: *const SwapChain) !c.VkRenderPass {
     const color_attachment = c.VkAttachmentDescription{
         .format = swap_chain.surface_format.format,
         .samples = c.VK_SAMPLE_COUNT_1_BIT,
@@ -795,38 +845,59 @@ fn createRenderPass(device: *const Device, swap_chain: *const SwapChain) !c.VkRe
         .layout = c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
     };
 
+    const depth_attachment = c.VkAttachmentDescription{
+        .format = try findDepthFormat(physical_device),
+        .samples = c.VK_SAMPLE_COUNT_1_BIT,
+        .loadOp = c.VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = c.VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .stencilLoadOp = c.VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = c.VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED,
+        .finalLayout = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+    };
+
+    const depth_attachment_ref = c.VkAttachmentReference{
+        .attachment = 1,
+        .layout = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+    };
+
     const subpass = c.VkSubpassDescription{
         .pipelineBindPoint = c.VK_PIPELINE_BIND_POINT_GRAPHICS,
         .colorAttachmentCount = 1,
         .pColorAttachments = &color_attachment_ref,
+        .pDepthStencilAttachment = &depth_attachment_ref,
     };
 
     const dependency = c.VkSubpassDependency{
         .srcSubpass = c.VK_SUBPASS_EXTERNAL,
         .dstSubpass = 0,
-        .srcStageMask = c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        .srcAccessMask = 0,
-        .dstStageMask = c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        .dstAccessMask = c.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        .srcStageMask = c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | c.VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+        .srcAccessMask = c.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+        .dstStageMask = c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | c.VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+        .dstAccessMask = c.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | c.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+    };
+    const attachments = [_]c.VkAttachmentDescription{
+        color_attachment,
+        depth_attachment,
     };
     const render_pass_info = c.VkRenderPassCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-        .attachmentCount = 1,
-        .pAttachments = &color_attachment,
+        .attachmentCount = attachments.len,
+        .pAttachments = &attachments[0],
         .subpassCount = 1,
         .pSubpasses = &subpass,
         .dependencyCount = 1,
         .pDependencies = &dependency,
     };
 
-    var result: c.VkRenderPass = undefined;
-    const err = c.vkCreateRenderPass(device.device, &render_pass_info, null, &result);
+    var render_pass: c.VkRenderPass = undefined;
+    const err = c.vkCreateRenderPass(device.device, &render_pass_info, null, &render_pass);
     if (err != c.VK_SUCCESS) {
         std.debug.print("Failed to create render pass: {s}\n", .{c.string_VkResult(err)});
         return error.VulkanRenderPassCreationFailed;
     }
 
-    return result;
+    return render_pass;
 }
 
 pub fn createFramebuffers(
@@ -835,14 +906,18 @@ pub fn createFramebuffers(
     pipeline: *const Pipeline,
     swap_chain: *const SwapChain,
     image_views: []c.VkImageView,
+    depth_image: *const Image,
 ) ![]c.VkFramebuffer {
     var framebuffers = try gpa.alloc(c.VkFramebuffer, image_views.len);
     for (0..image_views.len) |i| {
-        const attachments = [_]c.VkImageView{image_views[i]};
+        const attachments = [_]c.VkImageView{
+            image_views[i],
+            depth_image.image_view.?,
+        };
         const framebuffer_info = c.VkFramebufferCreateInfo{
             .sType = c.VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
             .renderPass = pipeline.render_pass,
-            .attachmentCount = 1,
+            .attachmentCount = attachments.len,
             .pAttachments = &attachments[0],
             .width = swap_chain.extent.width,
             .height = swap_chain.extent.height,
@@ -931,6 +1006,7 @@ pub fn recordCommandBuffer(
     graphics_pipeline: *const Pipeline,
     framebuffers: []c.VkFramebuffer,
     command_buffer: c.VkCommandBuffer,
+    descriptor_set: c.VkDescriptorSet,
     vertex_buffer: c.VkBuffer,
     vertex_count: u32,
     image_index: u32,
@@ -947,7 +1023,10 @@ pub fn recordCommandBuffer(
         return error.VulkanCommandBufferRecordingFailed;
     }
 
-    const clear_color = c.VkClearValue{ .color = .{ .float32 = .{ 0.0, 0.0, 0.0, 1.0 } } };
+    const clear_values = [_]c.VkClearValue{
+        .{ .color = .{ .float32 = .{ 0.0, 0.0, 0.0, 1.0 } } },
+        .{ .depthStencil = .{ .depth = 1.0, .stencil = 0.0 } },
+    };
     const render_pass_info = c.VkRenderPassBeginInfo{
         .sType = c.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
         .renderPass = graphics_pipeline.render_pass,
@@ -956,8 +1035,8 @@ pub fn recordCommandBuffer(
             .offset = .{ .x = 0, .y = 0 },
             .extent = swap_chain.extent,
         },
-        .clearValueCount = 1,
-        .pClearValues = &clear_color,
+        .clearValueCount = clear_values.len,
+        .pClearValues = &clear_values[0],
     };
 
     c.vkCmdBeginRenderPass(command_buffer, &render_pass_info, c.VK_SUBPASS_CONTENTS_INLINE);
@@ -983,6 +1062,8 @@ pub fn recordCommandBuffer(
         .extent = swap_chain.extent,
     };
     c.vkCmdSetScissor(command_buffer, 0, 1, &scissor);
+
+    c.vkCmdBindDescriptorSets(command_buffer, c.VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline.pipeline_layout, 0, 1, &descriptor_set, 0, null);
 
     c.vkCmdDraw(command_buffer, vertex_count, 1, 0, 0);
 
@@ -1028,6 +1109,7 @@ pub fn createSyncObjects(device: *const Device) !SyncObjects {
 const SwapChainRecreateResult = struct {
     swap_chain: SwapChain,
     image_views: []c.VkImageView,
+    depth_image: Image,
     framebuffers: []c.VkFramebuffer,
 };
 
@@ -1039,35 +1121,39 @@ pub fn recreateSwapChain(
     surface: c.VkSurfaceKHR,
     swap_chain: *const SwapChain,
     image_views: []c.VkImageView,
+    depth_image: *const Image,
     framebuffers: []c.VkFramebuffer,
     extent: c.VkExtent2D,
 ) !SwapChainRecreateResult {
     const err = c.vkDeviceWaitIdle(device.device);
     if (err != c.VK_SUCCESS) {
         std.debug.print("Failed to wait for device to become idle: {s}\n", .{c.string_VkResult(err)});
-        return error.DeviceWaitIdleFailed;
+        return error.VulkanDeviceWaitIdleFailed;
     }
 
+    depth_image.deinit(device);
     destroyFramebuffers(gpa, device, framebuffers);
     destroyImageViews(gpa, device, image_views);
     swap_chain.deinit(gpa, device);
 
     const new_swap_chain = try createSwapChain(gpa, physical_device, device, surface, extent);
     const new_image_views = try createImageViews(gpa, device, &new_swap_chain);
-    const new_framebuffers = try createFramebuffers(gpa, device, pipeline, &new_swap_chain, new_image_views);
+    const new_depth_image = try createDepthResources(physical_device, device, extent);
+    const new_framebuffers = try createFramebuffers(gpa, device, pipeline, &new_swap_chain, new_image_views, &new_depth_image);
 
     return .{
         .swap_chain = new_swap_chain,
         .image_views = new_image_views,
+        .depth_image = new_depth_image,
         .framebuffers = new_framebuffers,
     };
 }
 
-pub fn createBuffer(device: *const Device, buffer_size: usize) !c.VkBuffer {
+pub fn createBuffer(device: *const Device, usage: c.VkBufferUsageFlags, buffer_size: usize) !c.VkBuffer {
     const buffer_info = c.VkBufferCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size = buffer_size,
-        .usage = c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        .usage = usage,
         .sharingMode = c.VK_SHARING_MODE_EXCLUSIVE,
     };
 
@@ -1075,7 +1161,7 @@ pub fn createBuffer(device: *const Device, buffer_size: usize) !c.VkBuffer {
     const err = c.vkCreateBuffer(device.device, &buffer_info, null, &buffer);
     if (err != c.VK_SUCCESS) {
         std.debug.print("Failed to create buffer: {s}\n", .{c.string_VkResult(err)});
-        return error.VertexBufferCreationFailed;
+        return error.VulkanVertexBufferCreationFailed;
     }
 
     return buffer;
@@ -1095,14 +1181,14 @@ fn findMemoryType(physical_device: c.VkPhysicalDevice, type_filter: u32, propert
         }
     }
 
-    return error.FindingMemoryTypeFailed;
+    return error.VulkanFindingMemoryTypeFailed;
 }
 
-pub fn createBufferMemory(physical_device: c.VkPhysicalDevice, device: *const Device, buffer: c.VkBuffer) !c.VkDeviceMemory {
+pub fn createBufferMemory(physical_device: c.VkPhysicalDevice, device: *const Device, buffer: c.VkBuffer, properties: c.VkMemoryPropertyFlags) !c.VkDeviceMemory {
     var memory_requirements: c.VkMemoryRequirements = undefined;
     c.vkGetBufferMemoryRequirements(device.device, buffer, &memory_requirements);
 
-    const memory_type_index = try findMemoryType(physical_device, memory_requirements.memoryTypeBits, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    const memory_type_index = try findMemoryType(physical_device, memory_requirements.memoryTypeBits, properties);
     const alloc_info = c.VkMemoryAllocateInfo{
         .sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         .allocationSize = memory_requirements.size,
@@ -1113,13 +1199,13 @@ pub fn createBufferMemory(physical_device: c.VkPhysicalDevice, device: *const De
     var err = c.vkAllocateMemory(device.device, &alloc_info, null, &buffer_memory);
     if (err != c.VK_SUCCESS) {
         std.debug.print("Failed to create buffer memory: {s}\n", .{c.string_VkResult(err)});
-        return error.BufferMemoryCreationFailed;
+        return error.VulkanBufferMemoryCreationFailed;
     }
 
     err = c.vkBindBufferMemory(device.device, buffer, buffer_memory, 0);
     if (err != c.VK_SUCCESS) {
         std.debug.print("Failed to bind buffer memory: {s}\n", .{c.string_VkResult(err)});
-        return error.BufferMemoryBindingFailed;
+        return error.VulkanBufferMemoryBindingFailed;
     }
 
     return buffer_memory;
@@ -1135,11 +1221,190 @@ pub fn mapMemory(device: *const Device, buffer_memory: c.VkDeviceMemory, data_in
     const err = c.vkMapMemory(device.device, buffer_memory, 0, buffer_size, 0, @ptrCast(&data));
     if (err != c.VK_SUCCESS) {
         std.debug.print("Failed to map memory: {s}\n", .{c.string_VkResult(err)});
-        return error.MapMemoryFailed;
+        return error.VulkanMapMemoryFailed;
     }
 
     const data_slice: []f32 = data[0..data_in.len];
     std.mem.copyForwards(f32, data_slice, data_in);
 
     c.vkUnmapMemory(device.device, buffer_memory);
+}
+
+pub fn createDescriptorPool(device: *const Device, descriptor_count: usize) !c.VkDescriptorPool {
+    const pool_size = c.VkDescriptorPoolSize{
+        .type = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .descriptorCount = @intCast(descriptor_count),
+    };
+
+    const pool_info = c.VkDescriptorPoolCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .poolSizeCount = 1,
+        .pPoolSizes = &pool_size,
+        .maxSets = @intCast(descriptor_count),
+    };
+
+    var descriptor_pool: c.VkDescriptorPool = null;
+    const err = c.vkCreateDescriptorPool(device.device, &pool_info, null, &descriptor_pool);
+    if (err != c.VK_SUCCESS) {
+        std.debug.print("Failed to create descriptor pool: {s}\n", .{c.string_VkResult(err)});
+        return error.VulkanDescriptorPoolCreationFailed;
+    }
+
+    return descriptor_pool;
+}
+
+pub fn destroyDescriptorPool(device: *const Device, descriptor_pool: c.VkDescriptorPool) void {
+    c.vkDestroyDescriptorPool(device.device, descriptor_pool, null);
+}
+
+pub fn createDescriptorSets(gpa: std.mem.Allocator, device: *const Device, descriptor_pool: c.VkDescriptorPool, descriptor_set_layout: c.VkDescriptorSetLayout, descriptor_count: usize) ![]c.VkDescriptorSet {
+    const layouts = try gpa.alloc(c.VkDescriptorSetLayout, descriptor_count);
+    defer gpa.free(layouts);
+    for (0..descriptor_count) |i| {
+        layouts[i] = descriptor_set_layout;
+    }
+    const alloc_info = c.VkDescriptorSetAllocateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = descriptor_pool,
+        .descriptorSetCount = @intCast(descriptor_count),
+        .pSetLayouts = &layouts[0],
+    };
+
+    var descriptor_sets: []c.VkDescriptorSet = try gpa.alloc(c.VkDescriptorSet, descriptor_count);
+    const err = c.vkAllocateDescriptorSets(device.device, &alloc_info, &descriptor_sets[0]);
+    if (err != c.VK_SUCCESS) {
+        std.debug.print("Failed to allocate descriptor sets: {s}\n", .{c.string_VkResult(err)});
+        return error.VulkanDescriptorSetAllocationFailed;
+    }
+
+    return descriptor_sets[0..descriptor_count];
+}
+
+pub fn destroyDescriptorSets(gpa: std.mem.Allocator, descriptor_sets: []c.VkDescriptorSet) void {
+    // individual freeing of descriptor sets is not necessary, destroying the pool frees all sets
+    gpa.free(descriptor_sets);
+}
+
+pub fn createDepthResources(
+    physical_device: c.VkPhysicalDevice,
+    device: *const Device,
+    extent: c.VkExtent2D,
+) !Image {
+    const depth_format = try findDepthFormat(physical_device);
+
+    return createImage(
+        physical_device,
+        device,
+        extent.width,
+        extent.height,
+        depth_format,
+        c.VK_IMAGE_ASPECT_DEPTH_BIT,
+        c.VK_IMAGE_TILING_OPTIMAL,
+        c.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+        c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        true,
+    );
+}
+
+fn findSupportedFormat(
+    physical_device: c.VkPhysicalDevice,
+    candidates: []const c.VkFormat,
+    tiling: c.VkImageTiling,
+    features: c.VkFormatFeatureFlags,
+) !c.VkFormat {
+    for (candidates) |format| {
+        var props: c.VkFormatProperties = undefined;
+        c.vkGetPhysicalDeviceFormatProperties(physical_device, format, &props);
+
+        if (tiling == c.VK_IMAGE_TILING_LINEAR and (props.linearTilingFeatures & features) == features) {
+            return format;
+        } else if (tiling == c.VK_IMAGE_TILING_OPTIMAL and (props.optimalTilingFeatures & features) == features) {
+            return format;
+        }
+    }
+    return error.VulkanFindingSupportedFormatFailed;
+}
+
+fn findDepthFormat(physical_device: c.VkPhysicalDevice) !c.VkFormat {
+    return findSupportedFormat(
+        physical_device,
+        &[_]c.VkFormat{ c.VK_FORMAT_D32_SFLOAT, c.VK_FORMAT_D32_SFLOAT_S8_UINT, c.VK_FORMAT_D24_UNORM_S8_UINT },
+        c.VK_IMAGE_TILING_OPTIMAL,
+        c.VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT,
+    );
+}
+
+fn hasStencilComponent(format: c.VkFormat) bool {
+    return format == c.VK_FORMAT_D32_SFLOAT_S8_UINT or format == c.VK_FORMAT_D24_UNORM_S8_UINT;
+}
+
+fn createImage(
+    physical_device: c.VkPhysicalDevice,
+    device: *const Device,
+    width: u32,
+    height: u32,
+    format: c.VkFormat,
+    aspect_flags: c.VkImageAspectFlags,
+    tiling: c.VkImageTiling,
+    usage: c.VkImageUsageFlags,
+    properties: c.VkMemoryPropertyFlags,
+    create_image_view: bool,
+) !Image {
+    const image_info = c.VkImageCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = c.VK_IMAGE_TYPE_2D,
+        .extent = .{
+            .width = width,
+            .height = height,
+            .depth = 1,
+        },
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .format = format,
+        .tiling = tiling,
+        .initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED,
+        .usage = usage,
+        .samples = c.VK_SAMPLE_COUNT_1_BIT,
+        .sharingMode = c.VK_SHARING_MODE_EXCLUSIVE,
+    };
+
+    var image: c.VkImage = undefined;
+    var err = c.vkCreateImage(device.device, &image_info, null, &image);
+    if (err != c.VK_SUCCESS) {
+        std.debug.print("Failed to create image: {s}\n", .{c.string_VkResult(err)});
+        return error.VulkanImageCreationFailed;
+    }
+
+    var memRequirements: c.VkMemoryRequirements = undefined;
+    c.vkGetImageMemoryRequirements(device.device, image, &memRequirements);
+
+    const alloc_info = c.VkMemoryAllocateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = memRequirements.size,
+        .memoryTypeIndex = try findMemoryType(physical_device, memRequirements.memoryTypeBits, properties),
+    };
+
+    var image_memory: c.VkDeviceMemory = undefined;
+    err = c.vkAllocateMemory(device.device, &alloc_info, null, &image_memory);
+    if (err != c.VK_SUCCESS) {
+        std.debug.print("Failed to allocate image memory: {s}\n", .{c.string_VkResult(err)});
+        return error.VulkanImageMemoryAllocationFailed;
+    }
+
+    err = c.vkBindImageMemory(device.device, image, image_memory, 0);
+    if (err != c.VK_SUCCESS) {
+        std.debug.print("Failed to bind image memory: {s}\n", .{c.string_VkResult(err)});
+        return error.VulkanImageMemoryBindingFailed;
+    }
+
+    var image_view: c.VkImageView = null;
+    if (create_image_view) {
+        image_view = try createImageView(device, image, format, aspect_flags);
+    }
+
+    return .{
+        .image = image,
+        .memory = image_memory,
+        .image_view = image_view,
+    };
 }

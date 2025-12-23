@@ -1,4 +1,5 @@
 const std = @import("std");
+const zm = @import("zmath");
 
 const glfw = @import("glfw.zig");
 const vk = @import("vulkan.zig");
@@ -9,6 +10,13 @@ const shader_frag = @embedFile("shader.frag.spv");
 const suzanne = @embedFile("models/suzanne.obj");
 
 const MAX_FRAMES_IN_FLIGHT = 2;
+
+const UniformBufferObject = struct {
+    bla: f32 align(16),
+    model: zm.Mat align(16),
+    view: zm.Mat align(16),
+    projection: zm.Mat align(16),
+};
 
 pub fn main() !void {
     var allocator = std.heap.DebugAllocator(.{}){};
@@ -57,10 +65,20 @@ pub fn main() !void {
 
     std.debug.print("Image views count: {}\n", .{image_views.len});
 
-    const pipeline = try vk.createGraphicsPipeline(gpa, &device, &swap_chain, shader_vert, shader_frag);
+    const model = try models.Model.from_memory(gpa, suzanne);
+    defer model.deinit(gpa);
+
+    const descriptor_set_layout = try vk.createDescriptorSetLayout(&device);
+    defer vk.destroyDescriptorSetLayout(&device, descriptor_set_layout);
+
+    const vertex_desription = model.vertex_description();
+    const pipeline = try vk.createGraphicsPipeline(gpa, physical_device, &device, &swap_chain, shader_vert, shader_frag, descriptor_set_layout, vertex_desription);
     defer pipeline.deinit(&device);
 
-    var framebuffers = try vk.createFramebuffers(gpa, &device, &pipeline, &swap_chain, image_views);
+    var depth_image = try vk.createDepthResources(physical_device, &device, .{ .width = @intCast(width), .height = @intCast(height) });
+    defer depth_image.deinit(&device);
+
+    var framebuffers = try vk.createFramebuffers(gpa, &device, &pipeline, &swap_chain, image_views, &depth_image);
     defer vk.destroyFramebuffers(gpa, &device, framebuffers);
 
     const command_pool = try vk.createCommandPool(gpa, physical_device, surface, &device);
@@ -82,27 +100,97 @@ pub fn main() !void {
         sync_objects_list[i] = sync_objects;
     }
 
-    const model = try models.Model.from_memory(gpa, suzanne);
-    defer model.deinit(gpa);
-
     const vertex_data = try model.to_interleaved_data(gpa);
     defer gpa.free(vertex_data);
 
     const buffer_size = @sizeOf(@TypeOf(vertex_data[0])) * vertex_data.len;
-    const vertex_buffer = try vk.createBuffer(&device, buffer_size);
+    const vertex_buffer = try vk.createBuffer(&device, vk.c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, buffer_size);
     defer vk.destroyBuffer(&device, vertex_buffer);
 
-    const vertex_buffer_memory = try vk.createBufferMemory(physical_device, &device, vertex_buffer);
+    const vertex_buffer_memory = try vk.createBufferMemory(physical_device, &device, vertex_buffer, vk.c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     defer vk.destroyBufferMemory(&device, vertex_buffer_memory);
 
-    try vk.mapMemory(&device, vertex_buffer_memory, vertex_data);
+    try vk.mapMemory(&device, vertex_buffer_memory, @ptrCast(vertex_data));
+
+    var uniform_buffers = [_]vk.c.VkBuffer{undefined} ** MAX_FRAMES_IN_FLIGHT;
+    var uniform_buffers_memory = [_]vk.c.VkDeviceMemory{undefined} ** MAX_FRAMES_IN_FLIGHT;
+    var uniform_buffers_mapped = [_]*void{undefined} ** MAX_FRAMES_IN_FLIGHT;
+    for (0..MAX_FRAMES_IN_FLIGHT) |i| {
+        const ubo_size = @sizeOf(UniformBufferObject);
+        uniform_buffers[i] = try vk.createBuffer(&device, vk.c.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, ubo_size);
+        uniform_buffers_memory[i] = try vk.createBufferMemory(physical_device, &device, uniform_buffers[i], vk.c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        const err = vk.c.vkMapMemory(device.device, uniform_buffers_memory[i], 0, ubo_size, 0, @ptrCast(&uniform_buffers_mapped[i]));
+        if (err != vk.c.VK_SUCCESS) {
+            std.debug.print("Failed to map memory: {s}\n", .{vk.c.string_VkResult(err)});
+            return error.MapMemoryFailed;
+        }
+    }
+    defer {
+        for (0..MAX_FRAMES_IN_FLIGHT) |i| {
+            vk.destroyBufferMemory(&device, uniform_buffers_memory[i]);
+            vk.destroyBuffer(&device, uniform_buffers[i]);
+        }
+    }
+
+    const descriptor_pool = try vk.createDescriptorPool(&device, MAX_FRAMES_IN_FLIGHT);
+    defer vk.destroyDescriptorPool(&device, descriptor_pool);
+
+    const descriptor_sets = try vk.createDescriptorSets(gpa, &device, descriptor_pool, descriptor_set_layout, MAX_FRAMES_IN_FLIGHT);
+    defer vk.destroyDescriptorSets(gpa, descriptor_sets);
+
+    for (0..MAX_FRAMES_IN_FLIGHT) |i| {
+        const buffer_info = vk.c.VkDescriptorBufferInfo{
+            .buffer = uniform_buffers[i],
+            .offset = 0,
+            .range = @sizeOf(UniformBufferObject), // could also be VK_WHOLE_SIZE
+        };
+
+        const descriptor_write = vk.c.VkWriteDescriptorSet{
+            .sType = vk.c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = descriptor_sets[i],
+            .dstBinding = 0,
+            .dstArrayElement = 0,
+            .descriptorType = vk.c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .descriptorCount = 1,
+            .pBufferInfo = &buffer_info,
+            .pImageInfo = null,
+            .pTexelBufferView = null,
+        };
+        vk.c.vkUpdateDescriptorSets(device.device, 1, &descriptor_write, 0, null);
+    }
+
+    var rotation: f32 = 0.0;
 
     var current_frame: u32 = 0;
     while (!glfw.windowShouldClose(window)) {
         glfw.pollEvents();
+        const start = std.time.nanoTimestamp();
+
+        var new_width: i32 = 0;
+        var new_height: i32 = 0;
+        glfw.getFramebufferSize(window, &new_width, &new_height);
+
+        rotation += 0.001;
+        const object_to_world = zm.rotationY(rotation);
+        const world_to_view = zm.lookAtRh(
+            zm.f32x4(0.0, 0.0, 3.0, 1.0), // eye position
+            zm.f32x4(0.0, 0.0, 0.0, 1.0), // focus point
+            zm.f32x4(0.0, -1.0, 0.0, 0.0), // up direction ('w' coord is zero because this is a vector not a point)
+        );
+        const aspect_ratio: f32 = @as(f32, @floatFromInt(new_width)) / @as(f32, @floatFromInt(new_height));
+        const view_to_clip = zm.perspectiveFovRh(0.25 * std.math.pi, aspect_ratio, 0.1, 20.0);
+
+        const ubo = UniformBufferObject{
+            .bla = 1.0,
+            .model = object_to_world,
+            .view = world_to_view,
+            .projection = view_to_clip,
+        };
 
         const command_buffer = command_buffers[current_frame];
         const sync_objects = &sync_objects_list[current_frame];
+        const uniform_buffer_mapped = uniform_buffers_mapped[current_frame];
+        const descriptor_set = descriptor_sets[current_frame];
         const should_recreate_swap_chain = try drawFrame(
             &device,
             &swap_chain,
@@ -110,13 +198,13 @@ pub fn main() !void {
             framebuffers,
             command_buffer,
             sync_objects,
+            descriptor_set,
             vertex_buffer,
-            @intCast(vertex_data.len / 10),
+            vertex_data.len,
+            uniform_buffer_mapped,
+            &ubo,
         );
         if (should_recreate_swap_chain) {
-            var new_width: i32 = 0;
-            var new_height: i32 = 0;
-            glfw.getFramebufferSize(window, &new_width, &new_height);
             const result = try vk.recreateSwapChain(
                 gpa,
                 physical_device,
@@ -125,15 +213,21 @@ pub fn main() !void {
                 surface,
                 &swap_chain,
                 image_views,
+                &depth_image,
                 framebuffers,
                 .{ .width = @intCast(new_width), .height = @intCast(new_height) },
             );
             swap_chain = result.swap_chain;
             image_views = result.image_views;
+            depth_image = result.depth_image;
             framebuffers = result.framebuffers;
         }
 
         current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
+
+        const end = std.time.nanoTimestamp();
+        const frame_time_ms = @as(f32, @floatFromInt(end - start)) / 1_000_000.0;
+        std.debug.print("Frame time: {d:.2} ms - {d} fps\n", .{ frame_time_ms, 1000.0 / frame_time_ms });
     }
 
     const err = vk.c.vkDeviceWaitIdle(device.device);
@@ -169,11 +263,12 @@ fn drawFrame(
     framebuffers: []vk.c.VkFramebuffer,
     command_buffer: vk.c.VkCommandBuffer,
     sync_objects: *const vk.SyncObjects,
+    descriptor_set: vk.c.VkDescriptorSet,
     vertex_buffer: vk.c.VkBuffer,
-    vertex_count: u32,
+    vertex_count: usize,
+    uniform_buffer_mapped: *void,
+    ubo: *const UniformBufferObject,
 ) !bool {
-    const start = std.time.nanoTimestamp();
-
     var err = vk.c.vkWaitForFences(device.device, 1, &sync_objects.in_flight_fence, vk.c.VK_TRUE, vk.c.UINT64_MAX);
     if (err != vk.c.VK_SUCCESS) {
         std.debug.print("Failed to wait for in-flight fence: {s}\n", .{vk.c.string_VkResult(err)});
@@ -201,7 +296,10 @@ fn drawFrame(
         return error.ResettingCommandBufferFailed;
     }
 
-    try vk.recordCommandBuffer(swap_chain, pipeline, framebuffers, command_buffer, vertex_buffer, vertex_count, image_index);
+    try vk.recordCommandBuffer(swap_chain, pipeline, framebuffers, command_buffer, descriptor_set, vertex_buffer, @intCast(vertex_count), image_index);
+
+    const buf: *UniformBufferObject = @ptrCast(@alignCast(uniform_buffer_mapped));
+    buf.* = ubo.*;
 
     const wait_semaphores = [_]vk.c.VkSemaphore{sync_objects.image_available_semaphore};
     const wait_stages = [_]vk.c.VkPipelineStageFlags{vk.c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
@@ -241,10 +339,6 @@ fn drawFrame(
         std.debug.print("Failed to present swap chain image: {s}\n", .{vk.c.string_VkResult(err)});
         return error.PresentingSwapChainImageFailed;
     }
-
-    const end = std.time.nanoTimestamp();
-    const frame_time_ms = @as(f32, @floatFromInt(end - start)) / 1_000_000.0;
-    std.debug.print("Frame time: {d:.2} ms - {d} fps\n", .{ frame_time_ms, 1000.0 / frame_time_ms });
 
     return false;
 }
