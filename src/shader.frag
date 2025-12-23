@@ -4,8 +4,8 @@ layout(binding = 1) uniform sampler2D tex_sampler;
 
 layout(location = 0) flat in int frag_geometry_type;
 layout(location = 1) in vec2 frag_position;
-layout(location = 2) flat in vec2 frag_center;
-layout(location = 3) flat in float frag_radius;
+layout(location = 2) flat in float frag_radius;
+layout(location = 3) flat in int frag_texture_index;
 
 layout(location = 0) out vec4 out_color;
 
@@ -14,7 +14,7 @@ void main() {
         vec4 fill_color = vec4(0.25, 0.4, 0.75, 1.0); // Deep blue fill
         vec4 border_color = vec4(0.15, 0.25, 0.55, 1.0); // Darker blue border
 
-        float distance_from_center = distance(frag_position, frag_center);
+        float distance_from_center = length(frag_position);
         float t = distance_from_center / frag_radius;
 
         // Circle parameters (in normalized space where radius = 0.5)
@@ -39,7 +39,15 @@ void main() {
         // Solid green for rectangles
         out_color = vec4(0.0, 1.0, 0.0, 1.0);
     } else if (frag_geometry_type == 2) { // texture-mapped quad
-        out_color = texture(tex_sampler, frag_position);
+        vec2 texture_coords = frag_position + 0.5; // Map from [-0.5, 0.5] to [0, 1]
+        texture_coords.y = 1.0 - texture_coords.y; // Flip Y of texture coordinates
+        int texture_atlas_size = 4; // Number of textures in the atlas horizontally/vertically
+        vec2 offset = vec2(
+                float(frag_texture_index % texture_atlas_size) / float(texture_atlas_size),
+                float(frag_texture_index / texture_atlas_size) / float(texture_atlas_size)
+            );
+        texture_coords = texture_coords / float(texture_atlas_size) + offset;
+        out_color = texture(tex_sampler, texture_coords);
     } else {
         // Magenta for unknown geometry types
         out_color = vec4(1.0, 0.0, 1.0, 1.0);

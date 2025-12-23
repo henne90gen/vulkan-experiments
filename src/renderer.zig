@@ -227,8 +227,9 @@ pub const Renderer = struct {
 
         var image_index: u32 = 0;
         err = vk.c.vkAcquireNextImageKHR(self.device.device, self.swap_chain.swap_chain, vk.c.UINT64_MAX, vk_data.sync_objects.image_available_semaphore, @ptrCast(vk.c.VK_NULL_HANDLE), &image_index);
-        if (err == vk.c.VK_ERROR_OUT_OF_DATE_KHR) {
-            try self.recreateSwapChain(window);
+        if (err == vk.c.VK_ERROR_OUT_OF_DATE_KHR or err == vk.c.VK_SUBOPTIMAL_KHR) {
+            const new_framebuffer_size = glfw.getFramebufferSize(window);
+            try self.recreateSwapChain(new_framebuffer_size);
             return;
         } else if (err != vk.c.VK_SUCCESS and err != vk.c.VK_SUBOPTIMAL_KHR) {
             std.debug.print("Failed to acquire swap chain image: {s}\n", .{vk.c.string_VkResult(err)});
@@ -287,11 +288,17 @@ pub const Renderer = struct {
 
         err = vk.c.vkQueuePresentKHR(self.device.present_queue, &present_info);
         if (err == vk.c.VK_ERROR_OUT_OF_DATE_KHR or err == vk.c.VK_SUBOPTIMAL_KHR) {
-            try self.recreateSwapChain(window);
+            const new_framebuffer_size = glfw.getFramebufferSize(window);
+            try self.recreateSwapChain(new_framebuffer_size);
             return;
         } else if (err != vk.c.VK_SUCCESS) {
             std.debug.print("Failed to present swap chain image: {s}\n", .{vk.c.string_VkResult(err)});
             return error.PresentingSwapChainImageFailed;
+        }
+
+        const new_framebuffer_size = glfw.getFramebufferSize(window);
+        if (new_framebuffer_size.width != self.swap_chain.extent.width or new_framebuffer_size.height != self.swap_chain.extent.height) {
+            try self.recreateSwapChain(new_framebuffer_size);
         }
     }
 
@@ -370,8 +377,8 @@ pub const Renderer = struct {
         }
     }
 
-    fn recreateSwapChain(self: *Renderer, window: *glfw.c.GLFWwindow) !void {
-        const new_framebuffer_size = glfw.getFramebufferSize(window);
+    fn recreateSwapChain(self: *Renderer, new_framebuffer_size: glfw.FramebufferSize) !void {
+        std.debug.print("Recreating swap chain to new size: {}x{}\n", .{ new_framebuffer_size.width, new_framebuffer_size.height });
         const result = try vk.recreateSwapChain(
             self.allocator,
             &self.device,
@@ -458,11 +465,18 @@ pub const Vertex = extern struct {
     position: [3]f32 align(16),
 };
 
+pub const GeometryType = enum(i32) {
+    Circle = 0,
+    Rectangle = 1,
+    TexturedQuad = 2,
+};
+
 pub const GeometryInstance = extern struct {
-    geometry_type: f32 align(4),
+    geometry_type: GeometryType align(4),
     rotation: f32 align(4),
     translation: [2]f32 align(8),
     scale: [2]f32 align(8),
+    texture_index: i32 align(4),
 };
 
 fn createWindowSurface(instance: vk.c.VkInstance, window: *glfw.c.GLFWwindow) vk.c.VkSurfaceKHR {
@@ -519,6 +533,12 @@ fn vertexDescription() vk.VertexDescription {
                 .location = 4,
                 .format = vk.c.VK_FORMAT_R32G32_SFLOAT,
                 .offset = @offsetOf(GeometryInstance, "scale"),
+            },
+            .{
+                .binding = 1,
+                .location = 5,
+                .format = vk.c.VK_FORMAT_R32_SINT,
+                .offset = @offsetOf(GeometryInstance, "texture_index"),
             },
         },
     };

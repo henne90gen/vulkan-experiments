@@ -60,7 +60,7 @@ pub fn setWindowShouldClose(window: *c.GLFWwindow, shouldClose: bool) void {
     c.glfwSetWindowShouldClose(window, @intFromBool(shouldClose));
 }
 
-const FramebufferSize = struct {
+pub const FramebufferSize = struct {
     width: i32 = 0,
     height: i32 = 0,
 };

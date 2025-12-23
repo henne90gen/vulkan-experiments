@@ -11,8 +11,10 @@ pacman -S vulkan-validation-layers vulkan-utility-libraries
 - [x] render points on click
 - [x] connect points with lines
 - [x] add mouse wheel zooming
-- [ ] add mouse controls for camera movement
+- [x] add mouse controls for camera movement
 - [ ] add keyboard controls for camera movement
+- [ ] add ability to select primitives
+- [ ] add texture atlas with icons
 
 ## Cross Compilation
 

@@ -35,6 +35,7 @@ const LineCreationData = struct {
 
 const NavigationData = struct {
     left_mouse_button_down: bool = false,
+    last_cursor_position: ?[2]f32 = null,
 };
 
 const Primitive = union(enum) {
@@ -121,10 +122,11 @@ pub fn main() !void {
             switch (primitive) {
                 .point => |point| {
                     try geometry_instances.append(allocator, .{
-                        .geometry_type = 0,
+                        .geometry_type = rd.GeometryType.Circle,
                         .rotation = 0.0,
                         .translation = point,
                         .scale = [2]f32{ 1.0, 1.0 },
+                        .texture_index = 0,
                     });
                 },
                 .line => |line| {
@@ -139,10 +141,11 @@ pub fn main() !void {
                     };
                     const angle = std.math.atan2(ey - sy, ex - sx);
                     try geometry_instances.append(allocator, .{
-                        .geometry_type = 1,
+                        .geometry_type = rd.GeometryType.Rectangle,
                         .rotation = angle,
                         .translation = midpoint,
                         .scale = [2]f32{ distance, 0.5 },
+                        .texture_index = 0,
                     });
                 },
             }
@@ -164,27 +167,32 @@ pub fn main() !void {
                     };
                     const angle = std.math.atan2(ey - sy, ex - sx);
                     try geometry_instances.append(allocator, .{
-                        .geometry_type = 1,
+                        .geometry_type = rd.GeometryType.Rectangle,
                         .rotation = angle,
                         .translation = midpoint,
                         .scale = [2]f32{ distance, 0.5 },
+                        .texture_index = 0,
                     });
                     try geometry_instances.append(allocator, .{
-                        .geometry_type = 0,
+                        .geometry_type = rd.GeometryType.Circle,
                         .rotation = 0.0,
                         .translation = start,
                         .scale = [2]f32{ 1.0, 1.0 },
+                        .texture_index = 0,
                     });
                     try geometry_instances.append(allocator, .{
-                        .geometry_type = 0,
+                        .geometry_type = rd.GeometryType.Circle,
                         .rotation = 0.0,
                         .translation = end,
                         .scale = [2]f32{ 1.0, 1.0 },
+                        .texture_index = 0,
                     });
                 }
             },
             else => {},
         }
+
+        // TODO add UI elements to geometry instances
 
         try instance_buffer.update(@ptrCast(geometry_instances.items));
 
@@ -272,8 +280,7 @@ export fn mouseButtonCallback(window: ?*glfw.c.GLFWwindow, button: i32, action: 
 
     switch (window_state.?.mode) {
         .navigation => |*navigation_data| {
-            navigation_data.left_mouse_button_down = (button == glfw.c.GLFW_MOUSE_BUTTON_LEFT and action == glfw.c.GLFW_PRESS);
-            std.debug.print("Mouse button state: {}\n", .{navigation_data.left_mouse_button_down});
+            handleNavigation(window.?, button, action, window_state.?, navigation_data);
         },
         .creating_point => {
             createPoint(window.?, button, action, window_state.?);
@@ -281,6 +288,32 @@ export fn mouseButtonCallback(window: ?*glfw.c.GLFWwindow, button: i32, action: 
         .creating_line => |*line_data| {
             createLine(window.?, button, action, window_state.?, line_data);
         },
+    }
+}
+
+fn handleNavigation(window: *glfw.c.GLFWwindow, button: i32, action: i32, window_state: *WindowState, navigation_data: *NavigationData) void {
+    navigation_data.left_mouse_button_down = (button == glfw.c.GLFW_MOUSE_BUTTON_LEFT and action == glfw.c.GLFW_PRESS);
+    navigation_data.last_cursor_position = null;
+    std.debug.print("Mouse button state: {}\n", .{navigation_data.left_mouse_button_down});
+
+    if (!navigation_data.left_mouse_button_down) {
+        return;
+    }
+
+    const mousePosition = glfw.getMousePosition(window);
+    const scaled = mapMousePositionToObjectSpace(window, window_state, mousePosition);
+    std.debug.print("Searching for points around: ({}, {})\n", .{ scaled[0], scaled[1] });
+    const v0 = zm.f32x4(scaled[0], scaled[1], 0.0, 0.0);
+    for (window_state.primitives.items) |primitive| {
+        switch (primitive) {
+            .point => |point| {
+                const v1 = zm.f32x4(point[0], point[1], 0.0, 0.0);
+                const diff = v0 - v1;
+                const distance = zm.length2(diff)[0];
+                std.debug.print("Primitive: {any} distance={}\n", .{ primitive, distance });
+            },
+            .line => continue,
+        }
     }
 }
 
@@ -294,6 +327,7 @@ fn createPoint(window: *glfw.c.GLFWwindow, button: i32, action: i32, window_stat
     window_state.primitives.append(window_state.allocator, .{ .point = scaled }) catch {
         std.debug.print("Failed to append point\n", .{});
     };
+    std.debug.print("Point added: ({}, {}) -> primitives count = {}\n", .{ scaled[0], scaled[1], window_state.primitives.items.len });
 }
 
 fn createLine(window: *glfw.c.GLFWwindow, button: i32, action: i32, window_state: *WindowState, line_data: *LineCreationData) void {
@@ -317,7 +351,7 @@ fn createLine(window: *glfw.c.GLFWwindow, button: i32, action: i32, window_state
         window_state.primitives.append(window_state.allocator, .{ .point = scaled }) catch {
             std.debug.print("Failed to append point\n", .{});
         };
-        std.debug.print("Line added: {}\n", .{window_state.primitives.items.len});
+        std.debug.print("Line added: ({}, {}) - ({}, {}) -> primitives count = {}\n", .{ start[0], start[1], scaled[0], scaled[1], window_state.primitives.items.len });
         line_data.start = null;
     } else {
         line_data.start = scaled;
@@ -326,19 +360,26 @@ fn createLine(window: *glfw.c.GLFWwindow, button: i32, action: i32, window_state
 
 fn mapMousePositionToObjectSpace(window: *glfw.c.GLFWwindow, window_state: *WindowState, mousePosition: glfw.MousePosition) [2]f32 {
     const framebuffer_size = glfw.getFramebufferSize(window);
+    const framebuffer_size_vec = zm.f32x4(@floatFromInt(framebuffer_size.width), @floatFromInt(framebuffer_size.height), 0.0, 0.0);
+
+    var scaled = zm.f32x4(@floatCast(mousePosition.x), @floatCast(mousePosition.y), 0.0, 0.0);
+    scaled /= framebuffer_size_vec;
+    scaled *= zm.splat(zm.F32x4, 2.0);
+    scaled -= zm.splat(zm.F32x4, 1.0);
+    scaled *= zm.f32x4(1.0, -1.0, 0.0, 0.0);
+    scaled /= zm.splat(zm.F32x4, window_state.zoom);
+
     const aspect_ratio = @as(f64, @floatFromInt(framebuffer_size.width)) / @as(f64, @floatFromInt(framebuffer_size.height));
-    var scaled_x = (mousePosition.x / @as(f64, @floatFromInt(framebuffer_size.width))) * 2.0 - 1.0;
-    var scaled_y = -((mousePosition.y / @as(f64, @floatFromInt(framebuffer_size.height))) * 2.0 - 1.0);
-
-    scaled_x /= @as(f64, window_state.zoom);
-    scaled_y /= @as(f64, window_state.zoom);
-
     if (aspect_ratio > 1.0) {
-        scaled_x *= aspect_ratio;
+        scaled[0] *= @floatCast(aspect_ratio);
     } else {
-        scaled_y /= aspect_ratio;
+        scaled[1] /= @floatCast(aspect_ratio);
     }
-    return [2]f32{ @floatCast(scaled_x), @floatCast(scaled_y) };
+
+    const center = zm.f32x4(window_state.center[0], window_state.center[1], 0.0, 0.0);
+    scaled -= center;
+
+    return [2]f32{ scaled[0], scaled[1] };
 }
 
 export fn scrollCallback(window: ?*glfw.c.GLFWwindow, xoffset: f64, yoffset: f64) void {
@@ -356,7 +397,6 @@ export fn scrollCallback(window: ?*glfw.c.GLFWwindow, xoffset: f64, yoffset: f64
     if (window_state.?.zoom < 0.01) {
         window_state.?.zoom = 0.01;
     }
-    std.debug.print("Zoom: {d}\n", .{window_state.?.zoom});
 }
 
 export fn cursorPosCallback(window: ?*glfw.c.GLFWwindow, xpos: f64, ypos: f64) void {
@@ -372,14 +412,22 @@ export fn cursorPosCallback(window: ?*glfw.c.GLFWwindow, xpos: f64, ypos: f64) v
     switch (window_state.?.mode) {
         .navigation => |*navigation_data| {
             if (navigation_data.left_mouse_button_down) {
-                const scaled = mapMousePositionToObjectSpace(window.?, window_state.?, .{ .x = xpos, .y = ypos });
-                const delta_x = scaled[0] - window_state.?.center[0];
-                const delta_y = scaled[1] - window_state.?.center[1];
+                var current_cursor_position = mapMousePositionToObjectSpace(window.?, window_state.?, .{ .x = xpos, .y = ypos });
+                current_cursor_position[0] += window_state.?.center[0];
+                current_cursor_position[1] += window_state.?.center[1];
 
-                // TODO this does not quite work yet
-                std.debug.print("Cursor position: ({}, {}) -> ({}, {}) -> ({}, {})\n", .{ xpos, ypos, scaled[0], scaled[1], delta_x, delta_y });
-                window_state.?.center[0] -= delta_x;
-                window_state.?.center[1] -= delta_y;
+                if (navigation_data.last_cursor_position) |*last_cursor_position| {
+                    const delta_x = current_cursor_position[0] - last_cursor_position[0];
+                    const delta_y = current_cursor_position[1] - last_cursor_position[1];
+
+                    window_state.?.center[0] += delta_x;
+                    window_state.?.center[1] += delta_y;
+
+                    last_cursor_position[0] = current_cursor_position[0];
+                    last_cursor_position[1] = current_cursor_position[1];
+                } else {
+                    navigation_data.last_cursor_position = current_cursor_position;
+                }
             }
         },
         else => {},
