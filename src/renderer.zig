@@ -6,7 +6,7 @@ const bmp = @import("bitmap.zig");
 
 const shader_vert = @embedFile("shader.vert.spv");
 const shader_frag = @embedFile("shader.frag.spv");
-const greenland_grid_velo = @embedFile("assets/greenland_grid_velo.bmp");
+const icons = @embedFile("assets/icons_set_128x128.bmp");
 
 const MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -87,7 +87,7 @@ pub const Renderer = struct {
         const command_pool = try vk.createCommandPool(allocator, surface, &device);
         errdefer vk.destroyCommandPool(&device, command_pool);
 
-        const bitmap = try bmp.Bitmap.from_memory(allocator, greenland_grid_velo);
+        const bitmap = try bmp.Bitmap.from_memory(allocator, icons);
         defer bitmap.deinit(allocator);
 
         const texture_image = try vk.createTextureImage(&device, command_pool, bitmap.pixels, bitmap.width, bitmap.height, bitmap.bytes_per_pixel);
@@ -472,11 +472,12 @@ pub const GeometryType = enum(i32) {
 };
 
 pub const RenderHints = packed struct {
+    ui_element: bool = false,
     hovered: bool = false,
     selected: bool = false,
     disabled: bool = false,
 
-    _padding: u29 = 0,
+    _padding: u28 = 0,
 
     comptime {
         std.debug.assert(@sizeOf(@This()) == @sizeOf(u32));

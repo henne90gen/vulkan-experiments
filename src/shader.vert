@@ -42,13 +42,26 @@ vec2 applyZoomAndAspectRatio(vec2 pos, float zoom, float aspect_ratio) {
 }
 
 void main() {
-    vec2 transformed_position = applyTransformations(
-            position.xy,
-            rotation,
-            scale,
-            translation + ubo.offset
-        );
-    transformed_position = applyZoomAndAspectRatio(transformed_position, ubo.zoom, ubo.aspect_ratio);
+    bool is_ui = (render_hints & 1u) != 0u;
+
+    vec2 transformed_position = vec2(0.0);
+    if (!is_ui) {
+        transformed_position = applyTransformations(
+                position.xy,
+                rotation,
+                scale,
+                translation + ubo.offset
+            );
+        transformed_position = applyZoomAndAspectRatio(transformed_position, ubo.zoom, ubo.aspect_ratio);
+    } else {
+        transformed_position = applyTransformations(
+                position.xy,
+                rotation,
+                scale,
+                translation
+            );
+        transformed_position = applyZoomAndAspectRatio(transformed_position, 1.0, ubo.aspect_ratio);
+    }
     gl_Position = vec4(transformed_position, 0.0, 1.0);
 
     frag_geometry_type = geometry_type;

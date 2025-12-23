@@ -11,9 +11,9 @@ layout(location = 4) flat in uint frag_render_hints;
 layout(location = 0) out vec4 out_color;
 
 void main() {
-    bool is_hovered = (frag_render_hints & 1u) != 0u;
-    bool is_selected = (frag_render_hints & 2u) != 0u;
-    bool is_disabled = (frag_render_hints & 4u) != 0u;
+    bool is_hovered = (frag_render_hints & 2u) != 0u;
+    bool is_selected = (frag_render_hints & 4u) != 0u;
+    bool is_disabled = (frag_render_hints & 8u) != 0u;
 
     if (frag_geometry_type == 0) { // circle
         vec4 fill_color = is_selected ? vec4(0.9, 0.6, 0.2, 1.0) : vec4(0.25, 0.4, 0.75, 1.0); // Orange if selected, blue otherwise
@@ -46,7 +46,7 @@ void main() {
     } else if (frag_geometry_type == 2) { // texture-mapped quad
         vec2 texture_coords = frag_position + 0.5; // Map from [-0.5, 0.5] to [0, 1]
         texture_coords.y = 1.0 - texture_coords.y; // Flip Y of texture coordinates
-        int texture_atlas_size = 4; // Number of textures in the atlas horizontally/vertically
+        int texture_atlas_size = 5; // Number of textures in the atlas horizontally/vertically
         vec2 offset = vec2(
                 float(frag_texture_index % texture_atlas_size) / float(texture_atlas_size),
                 float(frag_texture_index / texture_atlas_size) / float(texture_atlas_size)

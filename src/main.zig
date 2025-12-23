@@ -127,86 +127,9 @@ pub fn main() !void {
         };
 
         geometry_instances.clearRetainingCapacity();
-        for (window_state.primitives.items) |primitive| {
-            switch (primitive) {
-                .point => |point| {
-                    try geometry_instances.append(allocator, .{
-                        .geometry_type = rd.GeometryType.Circle,
-                        .rotation = 0.0,
-                        .translation = point.data,
-                        .scale = [2]f32{ 1.0, 1.0 },
-                        .texture_index = 0,
-                        .render_hints = point.render_hints,
-                    });
-                },
-                .line => |line| {
-                    const sx = line.start[0];
-                    const sy = line.start[1];
-                    const ex = line.end[0];
-                    const ey = line.end[1];
-                    const distance = zm.sqrt((ex - sx) * (ex - sx) + (ey - sy) * (ey - sy));
-                    const midpoint = [2]f32{
-                        (sx + ex) * 0.5,
-                        (sy + ey) * 0.5,
-                    };
-                    const angle = std.math.atan2(ey - sy, ex - sx);
-                    try geometry_instances.append(allocator, .{
-                        .geometry_type = rd.GeometryType.Rectangle,
-                        .rotation = angle,
-                        .translation = midpoint,
-                        .scale = [2]f32{ distance, 0.5 },
-                        .texture_index = 0,
-                        .render_hints = line.render_hints,
-                    });
-                },
-            }
-        }
-
-        switch (window_state.mode) {
-            .creating_line => |*line_data| {
-                if (line_data.start) |start| {
-                    const mousePosition = glfw.getMousePosition(window);
-                    const end = mapMousePositionToObjectSpace(window, &window_state, mousePosition);
-                    const sx = start[0];
-                    const sy = start[1];
-                    const ex = end[0];
-                    const ey = end[1];
-                    const distance = zm.sqrt((ex - sx) * (ex - sx) + (ey - sy) * (ey - sy));
-                    const midpoint = [2]f32{
-                        (sx + ex) * 0.5,
-                        (sy + ey) * 0.5,
-                    };
-                    const angle = std.math.atan2(ey - sy, ex - sx);
-                    try geometry_instances.append(allocator, .{
-                        .geometry_type = rd.GeometryType.Rectangle,
-                        .rotation = angle,
-                        .translation = midpoint,
-                        .scale = [2]f32{ distance, 0.5 },
-                        .texture_index = 0,
-                        .render_hints = .{},
-                    });
-                    try geometry_instances.append(allocator, .{
-                        .geometry_type = rd.GeometryType.Circle,
-                        .rotation = 0.0,
-                        .translation = start,
-                        .scale = [2]f32{ 1.0, 1.0 },
-                        .texture_index = 0,
-                        .render_hints = .{},
-                    });
-                    try geometry_instances.append(allocator, .{
-                        .geometry_type = rd.GeometryType.Circle,
-                        .rotation = 0.0,
-                        .translation = end,
-                        .scale = [2]f32{ 1.0, 1.0 },
-                        .texture_index = 0,
-                        .render_hints = .{},
-                    });
-                }
-            },
-            else => {},
-        }
-
-        // TODO add UI elements to geometry instances
+        try addPrimitives(allocator, &window_state, &geometry_instances);
+        try addModeSpecificGeometry(allocator, &window_state, &geometry_instances, window);
+        try addUI(allocator, &window_state, &geometry_instances);
 
         try instance_buffer.update(@ptrCast(geometry_instances.items));
 
@@ -241,6 +164,109 @@ pub fn main() !void {
         std.debug.print("Failed to wait for device idle: {s}\n", .{vk.c.string_VkResult(err)});
         return;
     }
+}
+
+fn addPrimitives(allocator: std.mem.Allocator, window_state: *WindowState, geometry_instances: *std.ArrayList(rd.GeometryInstance)) !void {
+    for (window_state.primitives.items) |primitive| {
+        switch (primitive) {
+            .point => |point| {
+                try geometry_instances.append(allocator, .{
+                    .geometry_type = rd.GeometryType.Circle,
+                    .rotation = 0.0,
+                    .translation = point.data,
+                    .scale = [2]f32{ 1.0, 1.0 },
+                    .texture_index = 0,
+                    .render_hints = point.render_hints,
+                });
+            },
+            .line => |line| {
+                const sx = line.start[0];
+                const sy = line.start[1];
+                const ex = line.end[0];
+                const ey = line.end[1];
+                const distance = zm.sqrt((ex - sx) * (ex - sx) + (ey - sy) * (ey - sy));
+                const midpoint = [2]f32{
+                    (sx + ex) * 0.5,
+                    (sy + ey) * 0.5,
+                };
+                const angle = std.math.atan2(ey - sy, ex - sx);
+                try geometry_instances.append(allocator, .{
+                    .geometry_type = rd.GeometryType.Rectangle,
+                    .rotation = angle,
+                    .translation = midpoint,
+                    .scale = [2]f32{ distance, 0.5 },
+                    .texture_index = 0,
+                    .render_hints = line.render_hints,
+                });
+            },
+        }
+    }
+}
+
+fn addModeSpecificGeometry(allocator: std.mem.Allocator, window_state: *WindowState, geometry_instances: *std.ArrayList(rd.GeometryInstance), window: *glfw.c.GLFWwindow) !void {
+    switch (window_state.mode) {
+        .creating_line => |*line_data| {
+            if (line_data.start) |start| {
+                const mousePosition = glfw.getMousePosition(window);
+                const end = mapMousePositionToObjectSpace(window, window_state, mousePosition);
+                const sx = start[0];
+                const sy = start[1];
+                const ex = end[0];
+                const ey = end[1];
+                const distance = zm.sqrt((ex - sx) * (ex - sx) + (ey - sy) * (ey - sy));
+                const midpoint = [2]f32{
+                    (sx + ex) * 0.5,
+                    (sy + ey) * 0.5,
+                };
+                const angle = std.math.atan2(ey - sy, ex - sx);
+                try geometry_instances.append(allocator, .{
+                    .geometry_type = rd.GeometryType.Rectangle,
+                    .rotation = angle,
+                    .translation = midpoint,
+                    .scale = [2]f32{ distance, 0.5 },
+                    .texture_index = 0,
+                    .render_hints = .{},
+                });
+                try geometry_instances.append(allocator, .{
+                    .geometry_type = rd.GeometryType.Circle,
+                    .rotation = 0.0,
+                    .translation = start,
+                    .scale = [2]f32{ 1.0, 1.0 },
+                    .texture_index = 0,
+                    .render_hints = .{},
+                });
+                try geometry_instances.append(allocator, .{
+                    .geometry_type = rd.GeometryType.Circle,
+                    .rotation = 0.0,
+                    .translation = end,
+                    .scale = [2]f32{ 1.0, 1.0 },
+                    .texture_index = 0,
+                    .render_hints = .{},
+                });
+            }
+        },
+        else => {},
+    }
+}
+
+fn addUI(allocator: std.mem.Allocator, window_state: *WindowState, geometry_instances: *std.ArrayList(rd.GeometryInstance)) !void {
+    _ = window_state;
+    try geometry_instances.append(allocator, .{
+        .geometry_type = rd.GeometryType.Rectangle,
+        .rotation = 0.0,
+        .translation = [2]f32{ 0.0, 0.0 },
+        .scale = [2]f32{ 2.0, 2.0 },
+        .texture_index = 0,
+        .render_hints = .{ .ui_element = true },
+    });
+    try geometry_instances.append(allocator, .{
+        .geometry_type = rd.GeometryType.TexturedQuad,
+        .rotation = 0.0,
+        .translation = [2]f32{ -0.9, 0.5 },
+        .scale = [2]f32{ 0.5, 0.5 },
+        .texture_index = 1,
+        .render_hints = .{ .ui_element = true },
+    });
 }
 
 export fn keyCallback(window: ?*glfw.c.GLFWwindow, key: i32, scancode: i32, action: i32, mods: i32) void {
