@@ -18,7 +18,7 @@ pub fn terminate() void {
 
 pub fn createWindow(width: i32, height: i32, title: [:0]const u8) !*c.GLFWwindow {
     c.glfwWindowHint(c.GLFW_CLIENT_API, c.GLFW_NO_API);
-    c.glfwWindowHint(c.GLFW_RESIZABLE, c.GLFW_FALSE);
+    c.glfwWindowHint(c.GLFW_RESIZABLE, c.GLFW_TRUE);
 
     std.debug.print("Creating window with size={}x{} and title={s}\n", .{ width, height, title });
     return c.glfwCreateWindow(width, height, title.ptr, null, null) orelse error.GlfwCreateWindowFailed;

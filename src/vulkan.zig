@@ -1000,3 +1000,40 @@ pub fn createSyncObjects(device: *const Device) !SyncObjects {
 
     return result;
 }
+
+const SwapChainRecreateResult = struct {
+    swap_chain: SwapChain,
+    image_views: []c.VkImageView,
+    framebuffers: []c.VkFramebuffer,
+};
+
+pub fn recreateSwapChain(
+    gpa: std.mem.Allocator,
+    physical_device: c.VkPhysicalDevice,
+    device: *const Device,
+    pipeline: *const Pipeline,
+    surface: c.VkSurfaceKHR,
+    swap_chain: *const SwapChain,
+    image_views: []c.VkImageView,
+    framebuffers: []c.VkFramebuffer,
+) !SwapChainRecreateResult {
+    const err = c.vkDeviceWaitIdle(device.device);
+    if (err != c.VK_SUCCESS) {
+        std.debug.print("Failed to wait for device to become idle: {s}\n", .{c.string_VkResult(err)});
+        return error.WaitingForDeviceIdleFailed;
+    }
+
+    destroyFramebuffers(gpa, device, framebuffers);
+    destroyImageViews(gpa, device, image_views);
+    swap_chain.deinit(gpa, device);
+
+    const new_swap_chain = try createSwapChain(gpa, physical_device, device, surface);
+    const new_image_views = try createImageViews(gpa, device, &new_swap_chain);
+    const new_framebuffers = try createFramebuffers(gpa, device, pipeline, &new_swap_chain, new_image_views);
+
+    return .{
+        .swap_chain = new_swap_chain,
+        .image_views = new_image_views,
+        .framebuffers = new_framebuffers,
+    };
+}
