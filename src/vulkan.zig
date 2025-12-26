@@ -372,8 +372,8 @@ fn pickPhysicalDevice(gpa: std.mem.Allocator, instance: c.VkInstance, surface: c
         var device_properties: c.VkPhysicalDeviceProperties = undefined;
         c.vkGetPhysicalDeviceProperties(device, &device_properties);
         var device_name_len: usize = 0;
-        for (0..device_properties.deviceName.len) |i| {
-            if (device_properties.deviceName[i] == 0) {
+        for (device_properties.deviceName, 0..) |char, i| {
+            if (char == 0) {
                 device_name_len = i;
                 break;
             }
@@ -582,8 +582,8 @@ fn getSwapChainImages(gpa: std.mem.Allocator, device: *const Device, swap_chain:
 pub fn createImageViews(gpa: std.mem.Allocator, device: *const Device, swap_chain: *const SwapChain) ![]c.VkImageView {
     var image_views = try gpa.alloc(c.VkImageView, swap_chain.images.len);
     errdefer gpa.free(image_views);
-    for (0..swap_chain.images.len) |i| {
-        image_views[i] = try createImageView(device, swap_chain.images[i], swap_chain.surface_format.format, c.VK_IMAGE_ASPECT_COLOR_BIT);
+    for (swap_chain.images, 0..) |image, i| {
+        image_views[i] = try createImageView(device, image, swap_chain.surface_format.format, c.VK_IMAGE_ASPECT_COLOR_BIT);
         errdefer {
             for (0..i) |j| {
                 c.vkDestroyImageView(device.device, image_views[j], null);
@@ -942,9 +942,9 @@ pub fn createFramebuffers(
     depth_image: *const Image,
 ) ![]c.VkFramebuffer {
     var framebuffers = try gpa.alloc(c.VkFramebuffer, image_views.len);
-    for (0..image_views.len) |i| {
+    for (image_views, 0..) |image_view, i| {
         const attachments = [_]c.VkImageView{
-            image_views[i],
+            image_view,
             depth_image.image_view.?,
         };
         const framebuffer_info = c.VkFramebufferCreateInfo{

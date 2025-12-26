@@ -137,9 +137,8 @@ pub const Renderer = struct {
     }
 
     pub fn createPerFrameVkData(self: *Renderer) ![]PerFrameVulkanData {
-        var per_frame_vk_data = try self.allocator.alloc(PerFrameVulkanData, MAX_FRAMES_IN_FLIGHT);
-        for (0..per_frame_vk_data.len) |i| {
-            var data = &per_frame_vk_data[i];
+        const per_frame_vk_data = try self.allocator.alloc(PerFrameVulkanData, MAX_FRAMES_IN_FLIGHT);
+        for (per_frame_vk_data, 0..) |*data, i| {
             data.descriptor_set = self.descriptor_sets[i];
 
             data.command_buffer = try vk.createCommandBuffer(&self.device, self.command_pool);

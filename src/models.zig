@@ -159,12 +159,9 @@ pub const Model = struct {
         errdefer interleaved.deinit(gpa);
 
         for (self.faces) |face| {
-            for (0..face.vertices.len) |idx| {
-                const v_idx = face.vertices[idx];
+            for (face.vertices, face.texture_coordinates, face.normals) |v_idx, tc_idx, n_idx| {
                 const vertex = self.vertices[@intCast(v_idx)];
-                const tc_idx = face.texture_coordinates[idx];
                 const texture_coordinate = self.texture_coordinates[@intCast(tc_idx)];
-                const n_idx = face.normals[idx];
                 const normal = self.normals[@intCast(n_idx)];
                 try interleaved.append(gpa, .{
                     .position = vertex,
