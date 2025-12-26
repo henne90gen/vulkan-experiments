@@ -7,6 +7,7 @@ const bmp = @import("bitmap.zig");
 const utils = @import("utils.zig");
 const rd = @import("renderer.zig");
 const math = @import("math.zig");
+const cs = @import("constraint_solver.zig");
 
 test {
     std.testing.refAllDeclsRecursive(@This());
@@ -17,8 +18,9 @@ const WindowState = struct {
     zoom: f32,
     center: [2]f32 = .{ 0.0, 0.0 },
 
-    primitives: std.ArrayList(Primitive),
-    ui_elements: std.ArrayList(UiElement),
+    primitives: std.ArrayList(Primitive) = std.ArrayList(Primitive).empty,
+    constraints: std.ArrayList(Constraint) = std.ArrayList(Constraint).empty,
+    ui_elements: std.ArrayList(UiElement) = std.ArrayList(UiElement).empty,
 
     buttons: Buttons = .{},
 
@@ -26,27 +28,38 @@ const WindowState = struct {
 
     pub fn deinit(self: *WindowState) void {
         self.primitives.deinit(self.allocator);
+        self.constraints.deinit(self.allocator);
         self.ui_elements.deinit(self.allocator);
     }
 
     pub fn toggleMode(self: *WindowState, new_mode: InteractionMode) void {
         self.mode = new_mode;
-        self.buttons.navigation_btn.render_hints.selected = new_mode == .navigation;
-        self.buttons.create_point_btn.render_hints.selected = new_mode == .creating_point;
-        self.buttons.create_line_btn.render_hints.selected = new_mode == .creating_line;
+        self.btn(self.buttons.navigation_btn_idx).render_hints.selected = new_mode == .navigation;
+        self.btn(self.buttons.create_point_btn_idx).render_hints.selected = new_mode == .creating_point;
+        self.btn(self.buttons.create_line_btn_idx).render_hints.selected = new_mode == .creating_line;
+        self.btn(self.buttons.create_horizontal_btn_idx).render_hints.selected = new_mode == .creating_horizontal;
+        self.btn(self.buttons.create_vertical_btn_idx).render_hints.selected = new_mode == .creating_vertical;
+    }
+
+    fn btn(self: *WindowState, idx: usize) *Button {
+        return &self.ui_elements.items[idx].button;
     }
 };
 
 const Buttons = struct {
-    navigation_btn: *Button = undefined,
-    create_point_btn: *Button = undefined,
-    create_line_btn: *Button = undefined,
+    navigation_btn_idx: usize = undefined,
+    create_point_btn_idx: usize = undefined,
+    create_line_btn_idx: usize = undefined,
+    create_horizontal_btn_idx: usize = undefined,
+    create_vertical_btn_idx: usize = undefined,
 };
 
 const InteractionMode = union(enum) {
     navigation: NavigationData,
     creating_point,
     creating_line: LineCreationData,
+    creating_horizontal,
+    creating_vertical,
 };
 
 const LineCreationData = struct {
@@ -59,14 +72,34 @@ const NavigationData = struct {
 };
 
 const Primitive = union(enum) {
-    point: struct {
-        data: [2]f32,
-        render_hints: rd.RenderHints = .{},
+    point: PointPrimitive,
+    line: LinePrimitive,
+};
+
+const PointPrimitive = struct {
+    data: [2]f32,
+    render_hints: rd.RenderHints = .{},
+};
+
+const LinePrimitive = struct {
+    start: [2]f32,
+    end: [2]f32,
+    render_hints: rd.RenderHints = .{},
+};
+
+const Constraint = union(enum) {
+    point_on_line: struct {
+        point_idx: usize,
+        line_idx: usize,
     },
-    line: struct {
-        start: [2]f32,
-        end: [2]f32,
-        render_hints: rd.RenderHints = .{},
+    point_anchor: struct {
+        point_idx: usize,
+    },
+    line_horizontal: struct {
+        line_idx: usize,
+    },
+    line_vertical: struct {
+        line_idx: usize,
     },
 };
 
@@ -88,6 +121,8 @@ const ButtonImage = enum(i32) {
     Line = 2,
     Arc = 3,
     Circle = 4,
+    Horizontal = 10,
+    Vertical = 11,
 };
 
 pub fn main() !void {
@@ -110,8 +145,6 @@ pub fn main() !void {
     var window_state = WindowState{
         .allocator = allocator,
         .zoom = 0.1,
-        .primitives = std.ArrayList(Primitive).empty,
-        .ui_elements = std.ArrayList(UiElement).empty,
     };
     defer window_state.deinit();
 
@@ -161,18 +194,21 @@ pub fn main() !void {
         glfw.pollEvents();
         const start_time = std.time.nanoTimestamp();
 
-        const new_framebuffer_size = glfw.getFramebufferSize(window);
+        var solver = cs.Solver.init(allocator);
+        defer solver.deinit(allocator);
 
+        const framebuffer_size = glfw.getFramebufferSize(window);
         const ubo = rd.UniformBufferObject{
-            .aspect_ratio = @as(f32, @floatFromInt(new_framebuffer_size.width)) / @as(f32, @floatFromInt(new_framebuffer_size.height)),
+            .aspect_ratio = @as(f32, @floatFromInt(framebuffer_size.width)) / @as(f32, @floatFromInt(framebuffer_size.height)),
             .zoom = window_state.zoom,
             .offset = window_state.center,
         };
 
         geometry_instances.clearRetainingCapacity();
-        try addPrimitives(allocator, &window_state, &geometry_instances);
-        try addModeSpecificGeometry(allocator, &window_state, &geometry_instances, window);
-        try addUI(allocator, &window_state, &geometry_instances);
+        try renderPrimitives(allocator, &window_state, &geometry_instances);
+        try renderConstraints(allocator, &window_state, &geometry_instances);
+        try renderModeSpecificGeometry(allocator, &window_state, &geometry_instances, window);
+        try renderUI(allocator, &window_state, &geometry_instances);
 
         try instance_buffer.update(@ptrCast(geometry_instances.items));
 
@@ -221,11 +257,20 @@ fn createLineClicked(_: *Button, _: *glfw.c.GLFWwindow, window_state: *WindowSta
     window_state.toggleMode(.{ .creating_line = .{} });
 }
 
+fn createHorizontalClicked(_: *Button, _: *glfw.c.GLFWwindow, window_state: *WindowState) void {
+    window_state.toggleMode(.creating_horizontal);
+}
+
+fn createVerticalClicked(_: *Button, _: *glfw.c.GLFWwindow, window_state: *WindowState) void {
+    window_state.toggleMode(.creating_vertical);
+}
+
 fn initUI(window_state: *WindowState) !void {
     const btn_size = 0.15;
     var position_x: f32 = -1.0 + btn_size / 2.0;
     const position_y: f32 = 1.0 - btn_size / 2.0;
 
+    window_state.buttons.navigation_btn_idx = window_state.ui_elements.items.len;
     try window_state.ui_elements.append(window_state.allocator, .{
         .button = .{
             .position = .{ position_x, position_y },
@@ -235,9 +280,9 @@ fn initUI(window_state: *WindowState) !void {
             .render_hints = .{ .selected = true, .ui_element = true },
         },
     });
-    window_state.buttons.navigation_btn = &window_state.ui_elements.items[window_state.ui_elements.items.len - 1].button;
 
     position_x += btn_size;
+    window_state.buttons.create_point_btn_idx = window_state.ui_elements.items.len;
     try window_state.ui_elements.append(window_state.allocator, .{
         .button = .{
             .position = .{ position_x, position_y },
@@ -246,9 +291,9 @@ fn initUI(window_state: *WindowState) !void {
             .on_click = &createPointClicked,
         },
     });
-    window_state.buttons.create_point_btn = &window_state.ui_elements.items[window_state.ui_elements.items.len - 1].button;
 
     position_x += btn_size;
+    window_state.buttons.create_line_btn_idx = window_state.ui_elements.items.len;
     try window_state.ui_elements.append(window_state.allocator, .{
         .button = .{
             .position = .{ position_x, position_y },
@@ -257,10 +302,31 @@ fn initUI(window_state: *WindowState) !void {
             .on_click = &createLineClicked,
         },
     });
-    window_state.buttons.create_line_btn = &window_state.ui_elements.items[window_state.ui_elements.items.len - 1].button;
+
+    position_x += btn_size;
+    window_state.buttons.create_horizontal_btn_idx = window_state.ui_elements.items.len;
+    try window_state.ui_elements.append(window_state.allocator, .{
+        .button = .{
+            .position = .{ position_x, position_y },
+            .size = .{ btn_size, btn_size },
+            .image = .Horizontal,
+            .on_click = &createHorizontalClicked,
+        },
+    });
+
+    position_x += btn_size;
+    window_state.buttons.create_vertical_btn_idx = window_state.ui_elements.items.len;
+    try window_state.ui_elements.append(window_state.allocator, .{
+        .button = .{
+            .position = .{ position_x, position_y },
+            .size = .{ btn_size, btn_size },
+            .image = .Vertical,
+            .on_click = &createVerticalClicked,
+        },
+    });
 }
 
-fn addPrimitives(allocator: std.mem.Allocator, window_state: *WindowState, geometry_instances: *std.ArrayList(rd.GeometryInstance)) !void {
+fn renderPrimitives(allocator: std.mem.Allocator, window_state: *WindowState, geometry_instances: *std.ArrayList(rd.GeometryInstance)) !void {
     for (window_state.primitives.items) |primitive| {
         switch (primitive) {
             .point => |point| {
@@ -297,7 +363,40 @@ fn addPrimitives(allocator: std.mem.Allocator, window_state: *WindowState, geome
     }
 }
 
-fn addModeSpecificGeometry(allocator: std.mem.Allocator, window_state: *WindowState, geometry_instances: *std.ArrayList(rd.GeometryInstance), window: *glfw.c.GLFWwindow) !void {
+fn textureOnLine(allocator: std.mem.Allocator, geometry_instances: *std.ArrayList(rd.GeometryInstance), line: LinePrimitive, texture_index: i32) !void {
+    const start = line.start;
+    const end = line.end;
+    const midpoint = [2]f32{
+        (start[0] + end[0]) * 0.5,
+        (start[1] + end[1]) * 0.5,
+    };
+    try geometry_instances.append(allocator, .{
+        .geometry_type = rd.GeometryType.TexturedQuad,
+        .rotation = 0.0,
+        .translation = midpoint,
+        .scale = [2]f32{ 0.75, 0.75 },
+        .texture_index = texture_index,
+        .render_hints = .{},
+    });
+}
+
+fn renderConstraints(allocator: std.mem.Allocator, window_state: *WindowState, geometry_instances: *std.ArrayList(rd.GeometryInstance)) !void {
+    for (window_state.constraints.items) |constraint| {
+        switch (constraint) {
+            .line_horizontal => |data| {
+                const line = window_state.primitives.items[data.line_idx];
+                try textureOnLine(allocator, geometry_instances, line.line, @intFromEnum(ButtonImage.Horizontal));
+            },
+            .line_vertical => |data| {
+                const line = window_state.primitives.items[data.line_idx];
+                try textureOnLine(allocator, geometry_instances, line.line, @intFromEnum(ButtonImage.Vertical));
+            },
+            else => {},
+        }
+    }
+}
+
+fn renderModeSpecificGeometry(allocator: std.mem.Allocator, window_state: *WindowState, geometry_instances: *std.ArrayList(rd.GeometryInstance), window: *glfw.c.GLFWwindow) !void {
     switch (window_state.mode) {
         .creating_line => |*line_data| {
             if (line_data.start) |start| {
@@ -343,7 +442,7 @@ fn addModeSpecificGeometry(allocator: std.mem.Allocator, window_state: *WindowSt
     }
 }
 
-fn addUI(allocator: std.mem.Allocator, window_state: *WindowState, geometry_instances: *std.ArrayList(rd.GeometryInstance)) !void {
+fn renderUI(allocator: std.mem.Allocator, window_state: *WindowState, geometry_instances: *std.ArrayList(rd.GeometryInstance)) !void {
     if (false) {
         // NOTE this renders a rectangle covering the whole area that the UI can use
         try geometry_instances.append(allocator, .{
@@ -409,6 +508,51 @@ export fn keyCallback(window: ?*glfw.c.GLFWwindow, key: i32, scancode: i32, acti
     }
 }
 
+fn findLineIdx(window: *glfw.c.GLFWwindow, window_state: *WindowState) ?usize {
+    const mousePosition = glfw.getMousePosition(window);
+    const mouse_position = math.mapMousePositionToObjectSpace(window, window_state.zoom, mousePosition, window_state.center);
+    for (window_state.primitives.items, 0..) |primitive, idx| {
+        switch (primitive) {
+            .line => |line| {
+                const center = [2]f32{
+                    (line.start[0] + line.end[0]) / 2.0,
+                    (line.start[1] + line.end[1]) / 2.0,
+                };
+                const size = [2]f32{
+                    @abs(line.start[0] - line.end[0]),
+                    @abs(line.start[1] - line.end[1]),
+                };
+                if (math.rectContainsPoint(center, size, mouse_position)) {
+                    return idx;
+                }
+            },
+            else => {},
+        }
+    }
+    return null;
+}
+
+fn createLineConstraint(window: *glfw.c.GLFWwindow, button: i32, action: i32, window_state: *WindowState, is_horizontal: bool) !void {
+    if (button != glfw.c.GLFW_MOUSE_BUTTON_1 or action != glfw.c.GLFW_PRESS) {
+        return;
+    }
+
+    const line_idx = findLineIdx(window, window_state);
+    if (line_idx == null) {
+        std.debug.print("Failed to find line\n", .{});
+        return;
+    }
+
+    std.debug.print("Found line at idx={}\n", .{line_idx.?});
+
+    // TODO remove other horizontal/vertical constraints for same line
+    if (is_horizontal) {
+        try window_state.constraints.append(window_state.allocator, .{ .line_horizontal = .{ .line_idx = line_idx.? } });
+    } else {
+        try window_state.constraints.append(window_state.allocator, .{ .line_vertical = .{ .line_idx = line_idx.? } });
+    }
+}
+
 export fn mouseButtonCallback(window: ?*glfw.c.GLFWwindow, button: i32, action: i32, mods: i32) void {
     _ = mods;
     if (window == null) {
@@ -437,6 +581,16 @@ export fn mouseButtonCallback(window: ?*glfw.c.GLFWwindow, button: i32, action: 
         .creating_line => |*line_data| {
             createLine(window.?, button, action, window_state.?, line_data) catch {
                 std.debug.print("Failed to create line\n", .{});
+            };
+        },
+        .creating_horizontal => {
+            createLineConstraint(window.?, button, action, window_state.?, true) catch {
+                std.debug.print("Failed to create horizontal line constraint\n", .{});
+            };
+        },
+        .creating_vertical => {
+            createLineConstraint(window.?, button, action, window_state.?, false) catch {
+                std.debug.print("Failed to create vertical line constraint\n", .{});
             };
         },
     }
