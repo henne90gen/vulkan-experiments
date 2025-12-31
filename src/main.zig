@@ -663,9 +663,18 @@ fn createLine(window: *glfw.c.GLFWwindow, button: i32, action: i32, window_state
     const mouse_position = math.mapMousePositionToObjectSpace(window, window_state.zoom, mousePosition, window_state.center);
 
     if (line_data.start) |start| {
+        const line_idx = window_state.primitives.items.len;
         try window_state.primitives.append(window_state.allocator, .{ .line = .{ .start = start, .end = mouse_position } });
+
+        const point_1_idx = window_state.primitives.items.len;
         try window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = start } });
+
+        const point_2_idx = window_state.primitives.items.len;
         try window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = mouse_position } });
+
+        try window_state.constraints.append(window_state.allocator, .{ .point_on_line = .{ .point_idx = point_1_idx, .line_idx = line_idx } });
+        try window_state.constraints.append(window_state.allocator, .{ .point_on_line = .{ .point_idx = point_2_idx, .line_idx = line_idx } });
+
         std.debug.print("Line added: ({}, {}) - ({}, {}) -> primitives count = {}\n", .{ start[0], start[1], mouse_position[0], mouse_position[1], window_state.primitives.items.len });
         line_data.start = null;
     } else {
