@@ -52,6 +52,7 @@ const Buttons = struct {
     create_line_btn_idx: usize = undefined,
     create_horizontal_btn_idx: usize = undefined,
     create_vertical_btn_idx: usize = undefined,
+    solve_constraints_btn_idx: usize = undefined,
 };
 
 const InteractionMode = union(enum) {
@@ -194,9 +195,6 @@ pub fn main() !void {
         glfw.pollEvents();
         const start_time = std.time.nanoTimestamp();
 
-        var solver = cs.Solver.init(allocator);
-        defer solver.deinit(allocator);
-
         const framebuffer_size = glfw.getFramebufferSize(window);
         const ubo = rd.UniformBufferObject{
             .aspect_ratio = @as(f32, @floatFromInt(framebuffer_size.width)) / @as(f32, @floatFromInt(framebuffer_size.height)),
@@ -265,6 +263,58 @@ fn createVerticalClicked(_: *Button, _: *glfw.c.GLFWwindow, window_state: *Windo
     window_state.toggleMode(.creating_vertical);
 }
 
+fn prepareSolver(window_state: *WindowState, solver: *cs.Solver) !void {
+    for (window_state.primitives.items) |primitive| {
+        switch (primitive) {
+            .point => try solver.addPrimitive(cs.Node{ .Point = .{ .x = 0.0, .y = 0.0 } }),
+            .line => try solver.addPrimitive(cs.Node{ .Line = .{ .start = .{ .x = 0.0, .y = 0.0 }, .end = .{ .x = 1.0, .y = 1.0 } } }),
+        }
+    }
+    // x axis
+    const x_axis_id = window_state.primitives.items.len;
+    try solver.addPrimitive(cs.Node{ .Line = .{ .start = .{ .x = 0.0, .y = 0.0 }, .end = .{ .x = 1.0, .y = 0.0 } } });
+    // y axis
+    const y_axis_id = window_state.primitives.items.len + 1;
+    try solver.addPrimitive(cs.Node{ .Line = .{ .start = .{ .x = 0.0, .y = 0.0 }, .end = .{ .x = 0.0, .y = 1.0 } } });
+
+    for (window_state.constraints.items) |constraint| {
+        switch (constraint) {
+            .point_on_line => |d| try solver.addConstraint(cs.Constraint{ .key = .{ .node_id_1 = d.point_idx, .node_id_2 = d.line_idx }, .edge = .CoincidenceConstraint }),
+            .point_anchor => |d| try solver.addConstraint(cs.Constraint{ .key = .{ .node_id_1 = d.point_idx, .node_id_2 = d.point_idx }, .edge = .CoincidenceConstraint }),
+            .line_horizontal => |d| try solver.addConstraint(cs.Constraint{ .key = .{ .node_id_1 = d.line_idx, .node_id_2 = x_axis_id }, .edge = .ParallelConstraint }),
+            .line_vertical => |d| try solver.addConstraint(cs.Constraint{ .key = .{ .node_id_1 = d.line_idx, .node_id_2 = y_axis_id }, .edge = .ParallelConstraint }),
+        }
+    }
+}
+
+fn saveDotFile(allocator: std.mem.Allocator, solver: *cs.Solver) !void {
+    const dot_file_content = try solver.exportToDot(allocator);
+    defer allocator.free(dot_file_content);
+    const file = try std.fs.cwd().createFile("constraints.dot", .{});
+
+    defer file.close();
+    try file.writeAll(dot_file_content);
+}
+
+fn solveConstraintsClicked(_: *Button, _: *glfw.c.GLFWwindow, window_state: *WindowState) void {
+    var solver = cs.Solver.init(window_state.allocator);
+    defer solver.deinit(window_state.allocator);
+
+    prepareSolver(window_state, &solver) catch |err| {
+        std.debug.print("Error preparing solver: {}\n", .{err});
+        return;
+    };
+
+    saveDotFile(window_state.allocator, &solver) catch |err| {
+        std.debug.print("Error creating dot file: {}\n", .{err});
+        return;
+    };
+
+    solver.solve();
+
+    // TODO copy primitive data back into window_state
+}
+
 fn initUI(window_state: *WindowState) !void {
     const btn_size = 0.15;
     var position_x: f32 = -1.0 + btn_size / 2.0;
@@ -322,6 +372,17 @@ fn initUI(window_state: *WindowState) !void {
             .size = .{ btn_size, btn_size },
             .image = .Vertical,
             .on_click = &createVerticalClicked,
+        },
+    });
+
+    position_x += btn_size;
+    window_state.buttons.solve_constraints_btn_idx = window_state.ui_elements.items.len;
+    try window_state.ui_elements.append(window_state.allocator, .{
+        .button = .{
+            .position = .{ position_x, position_y },
+            .size = .{ btn_size, btn_size },
+            .image = .Navigation,
+            .on_click = &solveConstraintsClicked,
         },
     });
 }
