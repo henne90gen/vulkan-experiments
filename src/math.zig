@@ -1,7 +1,7 @@
 const glfw = @import("glfw.zig");
 const zm = @import("zmath");
 
-pub fn rectContainsPoint(rect_position: [2]f32, rect_size: [2]f32, point: [2]f32) bool {
+pub fn rectangleContainsPoint(rect_position: [2]f32, rect_size: [2]f32, point: [2]f32) bool {
     const half_size = [2]f32{ rect_size[0] * 0.5, rect_size[1] * 0.5 };
     const min_x = rect_position[0] - half_size[0];
     const max_x = rect_position[0] + half_size[0];
@@ -9,6 +9,11 @@ pub fn rectContainsPoint(rect_position: [2]f32, rect_size: [2]f32, point: [2]f32
     const max_y = rect_position[1] + half_size[1];
 
     return point[0] >= min_x and point[0] <= max_x and point[1] >= min_y and point[1] <= max_y;
+}
+
+pub fn circleContainsPoint(circle_center: [2]f32, circle_radius: f32, point: [2]f32) bool {
+    const distance_squared = zm.lengthSq2(zm.loadArr2(point) - zm.loadArr2(circle_center));
+    return distance_squared[0] <= circle_radius * circle_radius;
 }
 
 pub fn mapMousePositionToObjectSpace(window: *glfw.c.GLFWwindow, zoom: f32, mousePosition: glfw.MousePosition, offset: [2]f32) [2]f32 {

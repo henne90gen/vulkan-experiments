@@ -83,11 +83,11 @@ pub const Solver = struct {
         while (itr.next()) |element| {
             const edge = element.value_ptr;
             const label = switch (edge.*) {
-                .DistanceDimension => "DistanceDimension",
-                .AngleDimension => "AngleDimension",
-                .ParallelConstraint => "ParallelConstraint",
-                .PerpendicularConstraint => "PerpendicularConstraint",
-                .CoincidenceConstraint => "CoincidenceConstraint",
+                .DistanceDimension => "Distance",
+                .AngleDimension => "Angle",
+                .ParallelConstraint => "Parallel",
+                .PerpendicularConstraint => "Perpendicular",
+                .CoincidenceConstraint => "Coincidence",
             };
             const text = try std.fmt.allocPrint(
                 allocator,

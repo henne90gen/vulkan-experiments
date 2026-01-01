@@ -65,6 +65,7 @@ const InteractionMode = union(enum) {
 
 const LineCreationData = struct {
     start: ?[2]f32 = null,
+    start_idx: ?usize = null,
 };
 
 const NavigationData = struct {
@@ -388,18 +389,9 @@ fn initUI(window_state: *WindowState) !void {
 }
 
 fn renderPrimitives(allocator: std.mem.Allocator, window_state: *WindowState, geometry_instances: *std.ArrayList(rd.GeometryInstance)) !void {
+    // Render lines
     for (window_state.primitives.items) |primitive| {
         switch (primitive) {
-            .point => |point| {
-                try geometry_instances.append(allocator, .{
-                    .geometry_type = rd.GeometryType.Circle,
-                    .rotation = 0.0,
-                    .translation = point.data,
-                    .scale = [2]f32{ 1.0, 1.0 },
-                    .texture_index = 0,
-                    .render_hints = point.render_hints,
-                });
-            },
             .line => |line| {
                 const sx = line.start[0];
                 const sy = line.start[1];
@@ -420,6 +412,24 @@ fn renderPrimitives(allocator: std.mem.Allocator, window_state: *WindowState, ge
                     .render_hints = line.render_hints,
                 });
             },
+            else => {},
+        }
+    }
+
+    // Render points
+    for (window_state.primitives.items) |primitive| {
+        switch (primitive) {
+            .point => |point| {
+                try geometry_instances.append(allocator, .{
+                    .geometry_type = rd.GeometryType.Circle,
+                    .rotation = 0.0,
+                    .translation = point.data,
+                    .scale = [2]f32{ 1.0, 1.0 },
+                    .texture_index = 0,
+                    .render_hints = point.render_hints,
+                });
+            },
+            else => {},
         }
     }
 }
@@ -461,8 +471,47 @@ fn renderModeSpecificGeometry(allocator: std.mem.Allocator, window_state: *Windo
     switch (window_state.mode) {
         .creating_line => |*line_data| {
             if (line_data.start) |start| {
-                const mousePosition = glfw.getMousePosition(window);
-                const end = math.mapMousePositionToObjectSpace(window, window_state.zoom, mousePosition, window_state.center);
+                const mouse_position_window_space = glfw.getMousePosition(window);
+                const end = math.mapMousePositionToObjectSpace(window, window_state.zoom, mouse_position_window_space, window_state.center);
+                const sx = start[0];
+                const sy = start[1];
+                const ex = end[0];
+                const ey = end[1];
+                const distance = zm.sqrt((ex - sx) * (ex - sx) + (ey - sy) * (ey - sy));
+                const midpoint = [2]f32{
+                    (sx + ex) * 0.5,
+                    (sy + ey) * 0.5,
+                };
+                const angle = std.math.atan2(ey - sy, ex - sx);
+                try geometry_instances.append(allocator, .{
+                    .geometry_type = rd.GeometryType.Rectangle,
+                    .rotation = angle,
+                    .translation = midpoint,
+                    .scale = [2]f32{ distance, 0.5 },
+                    .texture_index = 0,
+                    .render_hints = .{},
+                });
+                try geometry_instances.append(allocator, .{
+                    .geometry_type = rd.GeometryType.Circle,
+                    .rotation = 0.0,
+                    .translation = start,
+                    .scale = [2]f32{ 1.0, 1.0 },
+                    .texture_index = 0,
+                    .render_hints = .{},
+                });
+                try geometry_instances.append(allocator, .{
+                    .geometry_type = rd.GeometryType.Circle,
+                    .rotation = 0.0,
+                    .translation = end,
+                    .scale = [2]f32{ 1.0, 1.0 },
+                    .texture_index = 0,
+                    .render_hints = .{},
+                });
+            }
+            if (line_data.start_idx) |start_idx| {
+                const mouse_position_window_space = glfw.getMousePosition(window);
+                const end = math.mapMousePositionToObjectSpace(window, window_state.zoom, mouse_position_window_space, window_state.center);
+                const start = window_state.primitives.items[start_idx].point.data;
                 const sx = start[0];
                 const sy = start[1];
                 const ex = end[0];
@@ -569,9 +618,7 @@ export fn keyCallback(window: ?*glfw.c.GLFWwindow, key: i32, scancode: i32, acti
     }
 }
 
-fn findLineIdx(window: *glfw.c.GLFWwindow, window_state: *WindowState) ?usize {
-    const mousePosition = glfw.getMousePosition(window);
-    const mouse_position = math.mapMousePositionToObjectSpace(window, window_state.zoom, mousePosition, window_state.center);
+fn findLineIdx(window_state: *WindowState, mouse_position: [2]f32) ?usize {
     for (window_state.primitives.items, 0..) |primitive, idx| {
         switch (primitive) {
             .line => |line| {
@@ -583,7 +630,21 @@ fn findLineIdx(window: *glfw.c.GLFWwindow, window_state: *WindowState) ?usize {
                     @abs(line.start[0] - line.end[0]),
                     @abs(line.start[1] - line.end[1]),
                 };
-                if (math.rectContainsPoint(center, size, mouse_position)) {
+                if (math.rectangleContainsPoint(center, size, mouse_position)) {
+                    return idx;
+                }
+            },
+            else => {},
+        }
+    }
+    return null;
+}
+
+fn findPointIdx(window_state: *WindowState, mouse_position: [2]f32) ?usize {
+    for (window_state.primitives.items, 0..) |primitive, idx| {
+        switch (primitive) {
+            .point => |point| {
+                if (math.circleContainsPoint(point.data, 1.0, mouse_position)) {
                     return idx;
                 }
             },
@@ -598,7 +659,9 @@ fn createLineConstraint(window: *glfw.c.GLFWwindow, button: i32, action: i32, wi
         return;
     }
 
-    const line_idx = findLineIdx(window, window_state);
+    const mouse_position_window_space = glfw.getMousePosition(window);
+    const mouse_position_object_space = math.mapMousePositionToObjectSpace(window, window_state.zoom, mouse_position_window_space, window_state.center);
+    const line_idx = findLineIdx(window_state, mouse_position_object_space);
     if (line_idx == null) {
         std.debug.print("Failed to find line\n", .{});
         return;
@@ -662,12 +725,12 @@ fn handleClickInUI(window: *glfw.c.GLFWwindow, button: i32, action: i32, window_
         return false;
     }
 
-    const mousePosition = glfw.getMousePosition(window);
-    const mouse_position = math.mapMousePositionToScreenSpace(window, 1.0, mousePosition);
+    const mouse_position_window_space = glfw.getMousePosition(window);
+    const mouse_position_screen_space = math.mapMousePositionToScreenSpace(window, 1.0, mouse_position_window_space);
     for (window_state.ui_elements.items) |*ui_elemnt| {
         switch (ui_elemnt.*) {
             .button => |*btn| {
-                if (math.rectContainsPoint(btn.position, btn.size, mouse_position)) {
+                if (math.rectangleContainsPoint(btn.position, btn.size, mouse_position_screen_space)) {
                     btn.on_click(btn, window, window_state);
                     return true;
                 }
@@ -686,9 +749,9 @@ fn handleNavigation(window: *glfw.c.GLFWwindow, button: i32, action: i32, window
         return;
     }
 
-    const mousePosition = glfw.getMousePosition(window);
-    const mouse_position = math.mapMousePositionToObjectSpace(window, window_state.zoom, mousePosition, window_state.center);
-    const v0 = zm.f32x4(mouse_position[0], mouse_position[1], 0.0, 0.0);
+    const mouse_position_window_space = glfw.getMousePosition(window);
+    const mouse_position_object_space = math.mapMousePositionToObjectSpace(window, window_state.zoom, mouse_position_window_space, window_state.center);
+    const v0 = zm.f32x4(mouse_position_object_space[0], mouse_position_object_space[1], 0.0, 0.0);
     for (window_state.primitives.items) |*primitive| {
         switch (primitive.*) {
             .point => |*point| {
@@ -709,10 +772,10 @@ fn createPoint(window: *glfw.c.GLFWwindow, button: i32, action: i32, window_stat
         return;
     }
 
-    const mousePosition = glfw.getMousePosition(window);
-    const mouse_position = math.mapMousePositionToObjectSpace(window, window_state.zoom, mousePosition, window_state.center);
-    try window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = mouse_position } });
-    std.debug.print("Point added: ({}, {}) -> primitives count = {}\n", .{ mouse_position[0], mouse_position[1], window_state.primitives.items.len });
+    const mouse_position_window_space = glfw.getMousePosition(window);
+    const mouse_position_object_space = math.mapMousePositionToObjectSpace(window, window_state.zoom, mouse_position_window_space, window_state.center);
+    try window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = mouse_position_object_space } });
+    std.debug.print("Point added: ({}, {}) -> primitives count = {}\n", .{ mouse_position_object_space[0], mouse_position_object_space[1], window_state.primitives.items.len });
 }
 
 fn createLine(window: *glfw.c.GLFWwindow, button: i32, action: i32, window_state: *WindowState, line_data: *LineCreationData) !void {
@@ -720,26 +783,82 @@ fn createLine(window: *glfw.c.GLFWwindow, button: i32, action: i32, window_state
         return;
     }
 
-    const mousePosition = glfw.getMousePosition(window);
-    const mouse_position = math.mapMousePositionToObjectSpace(window, window_state.zoom, mousePosition, window_state.center);
+    const mouse_position_window_space = glfw.getMousePosition(window);
+    const mouse_position_object_space = math.mapMousePositionToObjectSpace(window, window_state.zoom, mouse_position_window_space, window_state.center);
+
+    const end_idx_opt = findPointIdx(window_state, mouse_position_object_space);
 
     if (line_data.start) |start| {
-        const line_idx = window_state.primitives.items.len;
-        try window_state.primitives.append(window_state.allocator, .{ .line = .{ .start = start, .end = mouse_position } });
+        var end: [2]f32 = [2]f32{ 0.0, 0.0 };
 
-        const point_1_idx = window_state.primitives.items.len;
-        try window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = start } });
+        if (end_idx_opt) |end_idx| {
+            end = window_state.primitives.items[end_idx].point.data;
 
-        const point_2_idx = window_state.primitives.items.len;
-        try window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = mouse_position } });
+            const line_idx = window_state.primitives.items.len;
+            try window_state.primitives.append(window_state.allocator, .{ .line = .{ .start = start, .end = end } });
 
-        try window_state.constraints.append(window_state.allocator, .{ .point_on_line = .{ .point_idx = point_1_idx, .line_idx = line_idx } });
-        try window_state.constraints.append(window_state.allocator, .{ .point_on_line = .{ .point_idx = point_2_idx, .line_idx = line_idx } });
+            const point_1_idx = window_state.primitives.items.len;
+            try window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = start } });
 
-        std.debug.print("Line added: ({}, {}) - ({}, {}) -> primitives count = {}\n", .{ start[0], start[1], mouse_position[0], mouse_position[1], window_state.primitives.items.len });
+            try window_state.constraints.append(window_state.allocator, .{ .point_on_line = .{ .point_idx = point_1_idx, .line_idx = line_idx } });
+            try window_state.constraints.append(window_state.allocator, .{ .point_on_line = .{ .point_idx = end_idx, .line_idx = line_idx } });
+        } else {
+            end = mouse_position_object_space;
+
+            const line_idx = window_state.primitives.items.len;
+            try window_state.primitives.append(window_state.allocator, .{ .line = .{ .start = start, .end = end } });
+
+            const point_1_idx = window_state.primitives.items.len;
+            try window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = start } });
+
+            const point_2_idx = window_state.primitives.items.len;
+            try window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = end } });
+
+            try window_state.constraints.append(window_state.allocator, .{ .point_on_line = .{ .point_idx = point_1_idx, .line_idx = line_idx } });
+            try window_state.constraints.append(window_state.allocator, .{ .point_on_line = .{ .point_idx = point_2_idx, .line_idx = line_idx } });
+        }
+
+        std.debug.print("Line added: ({}, {}) - ({}, {}) -> primitives count = {}\n", .{ start[0], start[1], end[0], end[1], window_state.primitives.items.len });
         line_data.start = null;
+        return;
+    }
+
+    if (line_data.start_idx) |start_idx| {
+        const start = window_state.primitives.items[start_idx].point.data;
+        var end: [2]f32 = [2]f32{ 0.0, 0.0 };
+
+        if (end_idx_opt) |end_idx| {
+            end = window_state.primitives.items[end_idx].point.data;
+
+            const line_idx = window_state.primitives.items.len;
+            try window_state.primitives.append(window_state.allocator, .{ .line = .{ .start = start, .end = end } });
+
+            try window_state.constraints.append(window_state.allocator, .{ .point_on_line = .{ .point_idx = start_idx, .line_idx = line_idx } });
+            try window_state.constraints.append(window_state.allocator, .{ .point_on_line = .{ .point_idx = end_idx, .line_idx = line_idx } });
+        } else {
+            end = mouse_position_object_space;
+
+            const line_idx = window_state.primitives.items.len;
+            try window_state.primitives.append(window_state.allocator, .{ .line = .{ .start = start, .end = end } });
+
+            const point_2_idx = window_state.primitives.items.len;
+            try window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = end } });
+
+            try window_state.constraints.append(window_state.allocator, .{ .point_on_line = .{ .point_idx = start_idx, .line_idx = line_idx } });
+            try window_state.constraints.append(window_state.allocator, .{ .point_on_line = .{ .point_idx = point_2_idx, .line_idx = line_idx } });
+        }
+
+        std.debug.print("Line added: ({}, {}) - ({}, {}) -> primitives count = {}\n", .{ start[0], start[1], end[0], end[1], window_state.primitives.items.len });
+        line_data.start_idx = null;
+        return;
+    }
+
+    const point_idx_opt = findPointIdx(window_state, mouse_position_object_space);
+    if (point_idx_opt) |point_idx| {
+        std.debug.print("Point found at index {}\n", .{point_idx});
+        line_data.start_idx = point_idx;
     } else {
-        line_data.start = mouse_position;
+        line_data.start = mouse_position_object_space;
     }
 }
 
