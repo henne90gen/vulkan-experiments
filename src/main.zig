@@ -157,6 +157,22 @@ pub fn main() !void {
     try window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = [2]f32{ -2.0, -2.0 } } });
     try window_state.primitives.append(window_state.allocator, .{ .point = .{ .data = [2]f32{ -2.0, 2.0 } } });
 
+    try window_state.primitives.append(window_state.allocator, .{ .line = .{ .start = [2]f32{ 2.0, 2.0 }, .end = [2]f32{ 2.0, -2.0 } } });
+    try window_state.primitives.append(window_state.allocator, .{ .line = .{ .start = [2]f32{ 2.0, -2.0 }, .end = [2]f32{ -2.0, -2.0 } } });
+    try window_state.primitives.append(window_state.allocator, .{ .line = .{ .start = [2]f32{ -2.0, -2.0 }, .end = [2]f32{ -2.0, 2.0 } } });
+    try window_state.primitives.append(window_state.allocator, .{ .line = .{ .start = [2]f32{ -2.0, 2.0 }, .end = [2]f32{ 2.0, 2.0 } } });
+
+    try window_state.constraints.append(window_state.allocator, .{ .point_on_line = .{ .point_idx = 0, .line_idx = 4 } });
+    try window_state.constraints.append(window_state.allocator, .{ .point_on_line = .{ .point_idx = 1, .line_idx = 4 } });
+    try window_state.constraints.append(window_state.allocator, .{ .point_on_line = .{ .point_idx = 1, .line_idx = 5 } });
+    try window_state.constraints.append(window_state.allocator, .{ .point_on_line = .{ .point_idx = 2, .line_idx = 5 } });
+    try window_state.constraints.append(window_state.allocator, .{ .point_on_line = .{ .point_idx = 2, .line_idx = 6 } });
+    try window_state.constraints.append(window_state.allocator, .{ .point_on_line = .{ .point_idx = 3, .line_idx = 6 } });
+    try window_state.constraints.append(window_state.allocator, .{ .point_on_line = .{ .point_idx = 3, .line_idx = 7 } });
+    try window_state.constraints.append(window_state.allocator, .{ .point_on_line = .{ .point_idx = 0, .line_idx = 7 } });
+
+    try window_state.constraints.append(window_state.allocator, .{ .point_anchor = .{ .point_idx = 0 } });
+
     glfw.setWindowUserPointer(window, &window_state);
     glfw.setKeyCallback(window, keyCallback);
     glfw.setMouseButtonCallback(window, mouseButtonCallback);
@@ -267,8 +283,8 @@ fn createVerticalClicked(_: *Button, _: *glfw.c.GLFWwindow, window_state: *Windo
 fn prepareSolver(window_state: *WindowState, solver: *cs.Solver) !void {
     for (window_state.primitives.items) |primitive| {
         switch (primitive) {
-            .point => try solver.addPrimitive(cs.Node{ .Point = .{ .x = 0.0, .y = 0.0 } }),
-            .line => try solver.addPrimitive(cs.Node{ .Line = .{ .start = .{ .x = 0.0, .y = 0.0 }, .end = .{ .x = 1.0, .y = 1.0 } } }),
+            .point => |point| try solver.addPrimitive(cs.Node{ .Point = .{ .x = point.data[0], .y = point.data[1] } }),
+            .line => |line| try solver.addPrimitive(cs.Node{ .Line = .{ .start = .{ .x = line.start[0], .y = line.start[1] }, .end = .{ .x = line.end[0], .y = line.end[1] } } }),
         }
     }
     // x axis
@@ -280,10 +296,10 @@ fn prepareSolver(window_state: *WindowState, solver: *cs.Solver) !void {
 
     for (window_state.constraints.items) |constraint| {
         switch (constraint) {
-            .point_on_line => |d| try solver.addConstraint(cs.Constraint{ .key = .{ .node_id_1 = d.point_idx, .node_id_2 = d.line_idx }, .edge = .CoincidenceConstraint }),
-            .point_anchor => |d| try solver.addConstraint(cs.Constraint{ .key = .{ .node_id_1 = d.point_idx, .node_id_2 = d.point_idx }, .edge = .CoincidenceConstraint }),
-            .line_horizontal => |d| try solver.addConstraint(cs.Constraint{ .key = .{ .node_id_1 = d.line_idx, .node_id_2 = x_axis_id }, .edge = .ParallelConstraint }),
-            .line_vertical => |d| try solver.addConstraint(cs.Constraint{ .key = .{ .node_id_1 = d.line_idx, .node_id_2 = y_axis_id }, .edge = .ParallelConstraint }),
+            .point_on_line => |d| try solver.addConstraint(d.point_idx, d.line_idx, .CoincidenceConstraint),
+            .point_anchor => |d| try solver.addConstraint(d.point_idx, d.point_idx, .CoincidenceConstraint),
+            .line_horizontal => |d| try solver.addConstraint(d.line_idx, x_axis_id, .ParallelConstraint),
+            .line_vertical => |d| try solver.addConstraint(d.line_idx, y_axis_id, .ParallelConstraint),
         }
     }
 }
@@ -376,7 +392,7 @@ fn initUI(window_state: *WindowState) !void {
         },
     });
 
-    position_x += btn_size;
+    position_x += btn_size * 2;
     window_state.buttons.solve_constraints_btn_idx = window_state.ui_elements.items.len;
     try window_state.ui_elements.append(window_state.allocator, .{
         .button = .{

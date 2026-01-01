@@ -15,11 +15,6 @@ pub const Edge = union(enum) {
     CoincidenceConstraint,
 };
 
-pub const Constraint = struct {
-    key: EdgeKey,
-    edge: Edge,
-};
-
 pub const EdgeKey = struct {
     node_id_1: usize,
     node_id_2: usize,
@@ -52,8 +47,9 @@ pub const Solver = struct {
         try self.nodes.append(self.allocator, node);
     }
 
-    pub fn addConstraint(self: *Solver, constraint: Constraint) !void {
-        try self.edges.put(constraint.key, constraint.edge);
+    pub fn addConstraint(self: *Solver, node_id_1: usize, node_id_2: usize, edge: Edge) !void {
+        try self.edges.put(.{ .node_id_1 = node_id_1, .node_id_2 = node_id_2 }, edge);
+        try self.edges.put(.{ .node_id_1 = node_id_2, .node_id_2 = node_id_1 }, edge);
     }
 
     pub fn solve(self: *Solver) void {
