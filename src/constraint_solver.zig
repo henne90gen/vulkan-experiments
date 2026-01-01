@@ -1,18 +1,27 @@
 const std = @import("std");
 
-pub const Node = union(enum) {
-    Point: Point,
-    Line: struct { start: Point, end: Point },
+pub const Node = struct {
+    data: NodeData,
+    metadata: NodeMetadata = .{},
+};
+
+pub const NodeMetadata = struct {
+    label: []const u8 = "",
+};
+
+pub const NodeData = union(enum) {
+    point: Point,
+    line: struct { start: Point, end: Point },
 };
 
 pub const Point = struct { x: f32, y: f32 };
 
 pub const Edge = union(enum) {
-    DistanceDimension: struct { distance: f32 },
-    AngleDimension: struct { angle: f32 },
-    ParallelConstraint,
-    PerpendicularConstraint,
-    CoincidenceConstraint,
+    distance_dimension: struct { distance: f32 },
+    angle_dimension: struct { angle: f32 },
+    parallel_constraint,
+    perpendicular_constraint,
+    coincidence_constraint,
 };
 
 pub const EdgeKey = struct {
@@ -66,10 +75,15 @@ pub const Solver = struct {
         try dot.appendSlice(allocator, "    rankdir=LR;\n");
 
         for (self.nodes.items, 0..) |node, idx| {
-            const label = switch (node) {
-                .Point => "Point",
-                .Line => "Line",
-            };
+            const label = if (node.metadata.label.len == 0) switch (node.data) {
+                .point => try std.fmt.allocPrint(allocator, "Point ({d:.2},{d:.2})", .{ node.data.point.x, node.data.point.y }),
+                .line => try std.fmt.allocPrint(allocator, "Line ({d:.2},{d:.2}) -> ({d:.2},{d:.2})", .{ node.data.line.start.x, node.data.line.start.y, node.data.line.end.x, node.data.line.end.y }),
+            } else node.metadata.label;
+            defer {
+                if (node.metadata.label.len == 0) {
+                    allocator.free(label);
+                }
+            }
             const text = try std.fmt.allocPrint(allocator, "    {d} [label=\"{s}\"];\n", .{ idx, label });
             defer allocator.free(text);
             try dot.appendSlice(allocator, text);
@@ -79,11 +93,11 @@ pub const Solver = struct {
         while (itr.next()) |element| {
             const edge = element.value_ptr;
             const label = switch (edge.*) {
-                .DistanceDimension => "Distance",
-                .AngleDimension => "Angle",
-                .ParallelConstraint => "Parallel",
-                .PerpendicularConstraint => "Perpendicular",
-                .CoincidenceConstraint => "Coincidence",
+                .distance_dimension => "Distance",
+                .angle_dimension => "Angle",
+                .parallel_constraint => "Parallel",
+                .perpendicular_constraint => "Perpendicular",
+                .coincidence_constraint => "Coincidence",
             };
             const text = try std.fmt.allocPrint(
                 allocator,
