@@ -397,7 +397,7 @@ fn renderPrimitives(allocator: std.mem.Allocator, window_state: *WindowState, ge
                 const sy = line.start[1];
                 const ex = line.end[0];
                 const ey = line.end[1];
-                const distance = zm.sqrt((ex - sx) * (ex - sx) + (ey - sy) * (ey - sy));
+                const length = zm.length2(zm.loadArr2(line.start) - zm.loadArr2(line.end));
                 const midpoint = [2]f32{
                     (sx + ex) * 0.5,
                     (sy + ey) * 0.5,
@@ -407,7 +407,7 @@ fn renderPrimitives(allocator: std.mem.Allocator, window_state: *WindowState, ge
                     .geometry_type = rd.GeometryType.Rectangle,
                     .rotation = angle,
                     .translation = midpoint,
-                    .scale = [2]f32{ distance, 0.5 },
+                    .scale = [2]f32{ length[0], 0.5 },
                     .texture_index = 0,
                     .render_hints = line.render_hints,
                 });
@@ -622,15 +622,21 @@ fn findLineIdx(window_state: *WindowState, mouse_position: [2]f32) ?usize {
     for (window_state.primitives.items, 0..) |primitive, idx| {
         switch (primitive) {
             .line => |line| {
+                const sx = line.start[0];
+                const sy = line.start[1];
+                const ex = line.end[0];
+                const ey = line.end[1];
+                const length = zm.length2(zm.loadArr2(line.start) - zm.loadArr2(line.end));
                 const center = [2]f32{
-                    (line.start[0] + line.end[0]) / 2.0,
-                    (line.start[1] + line.end[1]) / 2.0,
+                    (sx + ex) * 0.5,
+                    (sy + ey) * 0.5,
                 };
+                const angle = std.math.atan2(ey - sy, ex - sx);
                 const size = [2]f32{
-                    @abs(line.start[0] - line.end[0]),
-                    @abs(line.start[1] - line.end[1]),
+                    length[0],
+                    0.5,
                 };
-                if (math.rectangleContainsPoint(center, size, mouse_position)) {
+                if (math.rectangleContainsPoint(center, size, angle, mouse_position)) {
                     return idx;
                 }
             },
@@ -730,7 +736,7 @@ fn handleClickInUI(window: *glfw.c.GLFWwindow, button: i32, action: i32, window_
     for (window_state.ui_elements.items) |*ui_elemnt| {
         switch (ui_elemnt.*) {
             .button => |*btn| {
-                if (math.rectangleContainsPoint(btn.position, btn.size, mouse_position_screen_space)) {
+                if (math.rectangleContainsPoint(btn.position, btn.size, 0.0, mouse_position_screen_space)) {
                     btn.on_click(btn, window, window_state);
                     return true;
                 }

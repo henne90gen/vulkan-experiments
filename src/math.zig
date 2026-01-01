@@ -1,14 +1,24 @@
 const glfw = @import("glfw.zig");
 const zm = @import("zmath");
 
-pub fn rectangleContainsPoint(rect_position: [2]f32, rect_size: [2]f32, point: [2]f32) bool {
+pub fn rectangleContainsPoint(rect_position: [2]f32, rect_size: [2]f32, rect_rotation: f32, point: [2]f32) bool {
     const half_size = [2]f32{ rect_size[0] * 0.5, rect_size[1] * 0.5 };
-    const min_x = rect_position[0] - half_size[0];
-    const max_x = rect_position[0] + half_size[0];
-    const min_y = rect_position[1] - half_size[1];
-    const max_y = rect_position[1] + half_size[1];
 
-    return point[0] >= min_x and point[0] <= max_x and point[1] >= min_y and point[1] <= max_y;
+    const cos_angle = @cos(rect_rotation);
+    const sin_angle = @sin(rect_rotation);
+
+    const dx = point[0] - rect_position[0];
+    const dy = point[1] - rect_position[1];
+
+    const local_x = dx * cos_angle + dy * sin_angle;
+    const local_y = -dx * sin_angle + dy * cos_angle;
+
+    const min_x = -half_size[0];
+    const max_x = half_size[0];
+    const min_y = -half_size[1];
+    const max_y = half_size[1];
+
+    return local_x >= min_x and local_x <= max_x and local_y >= min_y and local_y <= max_y;
 }
 
 pub fn circleContainsPoint(circle_center: [2]f32, circle_radius: f32, point: [2]f32) bool {
