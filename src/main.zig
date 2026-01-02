@@ -290,23 +290,33 @@ fn createVerticalClicked(_: *Button, _: *glfw.c.GLFWwindow, window_state: *Windo
 }
 
 fn prepareSolver(window_state: *WindowState, solver: *cs.Solver) !void {
-    for (window_state.primitives.items) |primitive| {
+    for (window_state.primitives.items, 0..) |primitive, idx| {
         switch (primitive) {
-            .point => |point| try solver.addPrimitive(cs.Node{ .data = .{ .point = .{ .x = point.data[0], .y = point.data[1] } } }),
-            .line => |line| try solver.addPrimitive(cs.Node{ .data = .{ .line = .{ .start = .{ .x = line.start[0], .y = line.start[1] }, .end = .{ .x = line.end[0], .y = line.end[1] } } } }),
+            .point => |point| try solver.addPrimitive(cs.Node{
+                .id = idx,
+                .data = .{ .point = .{ .input = .{ .x = point.data[0], .y = point.data[1] } } },
+            }),
+            .line => |line| try solver.addPrimitive(cs.Node{
+                .id = idx,
+                .data = .{ .line = .{ .input_start = .{ .x = line.start[0], .y = line.start[1] }, .input_end = .{ .x = line.end[0], .y = line.end[1] } } },
+            }),
         }
     }
+
     // x axis
     const x_axis_id = window_state.primitives.items.len;
-    try solver.addPrimitive(cs.Node{ .data = .{ .line = .{ .start = .{ .x = 0.0, .y = 0.0 }, .end = .{ .x = 1.0, .y = 0.0 } } }, .metadata = .{ .label = "X Axis" } });
+    try solver.addPrimitive(cs.Node{ .id = x_axis_id, .data = .{ .line = .{ .input_start = .{ .x = 0.0, .y = 0.0 }, .input_end = .{ .x = 1.0, .y = 0.0 } } }, .metadata = .{ .label = "X Axis" } });
+    try solver.addConstraint(x_axis_id, x_axis_id, .anchor_constraint);
+
     // y axis
     const y_axis_id = window_state.primitives.items.len + 1;
-    try solver.addPrimitive(cs.Node{ .data = .{ .line = .{ .start = .{ .x = 0.0, .y = 0.0 }, .end = .{ .x = 0.0, .y = 1.0 } } }, .metadata = .{ .label = "Y Axis" } });
+    try solver.addPrimitive(cs.Node{ .id = y_axis_id, .data = .{ .line = .{ .input_start = .{ .x = 0.0, .y = 0.0 }, .input_end = .{ .x = 0.0, .y = 1.0 } } }, .metadata = .{ .label = "Y Axis" } });
+    try solver.addConstraint(y_axis_id, y_axis_id, .anchor_constraint);
 
     for (window_state.constraints.items) |constraint| {
         switch (constraint) {
             .point_on_line => |d| try solver.addConstraint(d.point_idx, d.line_idx, .coincidence_constraint),
-            .point_anchor => |d| try solver.addConstraint(d.point_idx, d.point_idx, .coincidence_constraint),
+            .point_anchor => |d| try solver.addConstraint(d.point_idx, d.point_idx, .anchor_constraint),
             .line_horizontal => |d| try solver.addConstraint(d.line_idx, x_axis_id, .parallel_constraint),
             .line_vertical => |d| try solver.addConstraint(d.line_idx, y_axis_id, .parallel_constraint),
         }
@@ -336,7 +346,10 @@ fn solveConstraintsClicked(_: *Button, _: *glfw.c.GLFWwindow, window_state: *Win
         return;
     };
 
-    solver.solve();
+    solver.solve() catch |err| {
+        std.debug.print("Error solving constraints: {}\n", .{err});
+        return;
+    };
 
     // TODO copy primitive data back into window_state
 }
