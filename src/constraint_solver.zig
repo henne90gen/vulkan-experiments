@@ -85,48 +85,63 @@ pub const Solver = struct {
         std.debug.print("Solving constraints\n", .{});
         std.debug.print("Nodes: {} Edges: {}\n", .{ self.nodes.items.len, self.edges.count() });
 
+        const start_time = std.time.nanoTimestamp();
+
+        // process anchor constraints
+        var edge_itr = self.edges.iterator();
+        while (edge_itr.next()) |edge| {
+            switch (edge.value_ptr.*) {
+                .anchor_constraint => {
+                    var node = self.nodes.items[edge.key_ptr.*.node_id_1];
+                    switch (node.data) {
+                        .point => |*p| p.result = p.input,
+                        .line => |*l| l.result_closest_to_origin = lineConvertToClosestToOrigin(l.input_start, l.input_end),
+                    }
+                    std.debug.print("applying anchor node: {} {}\n", .{node.id, node.data});
+                },
+                else => {},
+            }
+        }
+
+
         var adjacency_map = try AdjacencyMap.init(self.allocator, &self.nodes, &self.edges);
         defer adjacency_map.deinit(self.allocator);
 
-        // find anchored node
-        var anchored_node: ?*Node = null;
-        for (self.nodes.items) |*node| {
-            const self_edge = self.getConstraint(node.id, node.id);
-            if (self_edge) |edge| {
-                switch (edge) {
-                    .anchor_constraint => {
-                        anchored_node = node;
-                        break;
-                    },
-                    else => {},
+        var changed = true;
+        while(changed) {
+            changed = false;
+            for (self.nodes.items) | *node| {
+                std.debug.print("looking at node: {}\n", .{node.id});
+                const neighbors = adjacency_map.backing_map.get(node.id);
+                if (neighbors == null) {
+                    continue;
                 }
+
+                const degrees_of_freedom: usize = switch (node.data) {
+                    .point => 2,
+                    .line => 2,
+                };
+
+                const known_neighbors: usize = 0;
+                for (neighbors.?.items)|neighbor| {
+                    std.debug.print("  neighbor: {}\n", .{neighbor.id});
+
+
+                }
+
+                if (known_neighbors < degrees_of_freedom) {
+                    std.debug.print("  not all neighbors are fully known\n", .{});
+                    continue;
+                }
+
+                std.debug.print("  all neighbors are fully known\n", .{});
             }
         }
 
-        if (anchored_node == null) {
-            std.debug.print("No anchored node found\n", .{});
-            return error.NoAnchoredNodeFound;
-        }
-
-        // propagate from anchored node
-        var visited = std.AutoHashMap(*Node, bool).init(self.allocator);
-        defer visited.deinit();
-        var queue = std.ArrayList(*Node).empty;
-        defer queue.deinit(self.allocator);
-        try queue.append(self.allocator, anchored_node.?);
-        while (queue.pop()) |node| {
-            const is_visited = try visited.getOrPut(node);
-            if (is_visited.found_existing) {
-                continue;
-            }
-
-            const neighbors = adjacency_map.backing_map.get(node.id) orelse continue;
-            for (neighbors.items) |neighbor| {
-                std.debug.print("Propagating from node {} to node {}\n", .{ node.id, neighbor.id });
-                try queue.append(self.allocator, neighbor);
-            }
-        }
-
+        const end_time = std.time.nanoTimestamp();
+        const time_ns = end_time - start_time;
+        const time_ms = @as(f32, @floatFromInt(time_ns)) / 1_000_000.0;
+        std.debug.print("Time taken: {d:.2}ms\n", .{time_ms});
         std.debug.print("Solving constraints - Done\n", .{});
     }
 
@@ -224,3 +239,10 @@ const AdjacencyMap = struct {
         self.backing_map.deinit();
     }
 };
+
+pub fn lineConvertToClosestToOrigin(start: Point, end: Point) Point {
+    _ = start;
+    _ = end;
+    // TODO find point the is closest to the line given by it's start and end points
+    return Point{ .x = 0.0, .y = 0.0 };
+}
