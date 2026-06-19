@@ -4,15 +4,12 @@ const builtin = @import("builtin");
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const exe = b.addExecutable(.{
-        .name = "vulkan_tutorial",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
+    const exe_mod = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
     });
-    exe.root_module.addIncludePath(b.path("src"));
+    exe_mod.addIncludePath(b.path("src"));
 
     // GLFW
     const glfw_dep = b.dependency("glfw_zig", .{
@@ -22,13 +19,17 @@ pub fn build(b: *std.Build) !void {
     const glfw_lib = glfw_dep.artifact("glfw");
     for (glfw_lib.root_module.include_dirs.items) |*included| {
         switch (included.*) {
-            .path => exe.addIncludePath(included.path),
+            .path => exe_mod.addIncludePath(included.path),
             else => {},
         }
     }
-    exe.linkLibrary(glfw_lib);
-    exe.root_module.addCMacro("GLFW_INCLUDE_NONE", "1");
-    exe.root_module.addCMacro("GLFW_INCLUDE_VULKAN", "1");
+    exe_mod.linkLibrary(glfw_lib);
+    exe_mod.addCMacro("GLFW_INCLUDE_NONE", "1");
+    exe_mod.addCMacro("GLFW_INCLUDE_VULKAN", "1");
+    const exe = b.addExecutable(.{
+        .name = "vulkan_tutorial",
+        .root_module = exe_mod,
+    });
 
     // Vulkan
     const vulkan_sdk_path = b.option([]const u8, "vulkan-sdk-path", "Path to Vulkan SDK");
@@ -39,23 +40,23 @@ pub fn build(b: *std.Build) !void {
     if (vulkan_sdk_path != null) {
         switch (target.result.os.tag) {
             .windows => {
-                exe.root_module.addIncludePath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/Include", .{vulkan_sdk_path.?}) });
-                exe.root_module.addLibraryPath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/Lib", .{vulkan_sdk_path.?}) });
+                exe_mod.addIncludePath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/Include", .{vulkan_sdk_path.?}) });
+                exe_mod.addLibraryPath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/Lib", .{vulkan_sdk_path.?}) });
             },
             else => {
-                exe.root_module.addIncludePath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/include", .{vulkan_sdk_path.?}) });
-                exe.root_module.addLibraryPath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/lib", .{vulkan_sdk_path.?}) });
+                exe_mod.addIncludePath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/include", .{vulkan_sdk_path.?}) });
+                exe_mod.addLibraryPath(.{ .cwd_relative = try std.fmt.allocPrint(b.allocator, "{s}/lib", .{vulkan_sdk_path.?}) });
             },
         }
     }
     switch (target.result.os.tag) {
-        .windows => exe.root_module.linkSystemLibrary("vulkan-1", .{}),
-        else => exe.root_module.linkSystemLibrary("vulkan", .{}),
+        .windows => exe_mod.linkSystemLibrary("vulkan-1", .{}),
+        else => exe_mod.linkSystemLibrary("vulkan", .{}),
     }
 
     // zmath
     const zmath = b.dependency("zmath", .{});
-    exe.root_module.addImport("zmath", zmath.module("root"));
+    exe_mod.addImport("zmath", zmath.module("root"));
 
     b.installArtifact(exe);
 
@@ -84,7 +85,7 @@ pub fn build(b: *std.Build) !void {
         run_cmd.addArgs(args);
     }
 
-    const exe_tests = b.addTest(.{ .root_module = exe.root_module });
+    const exe_tests = b.addTest(.{ .root_module = exe_mod });
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
     const test_step = b.step("test", "Run tests");

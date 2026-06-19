@@ -7,30 +7,21 @@ pub fn MemoryMappedStruct(comptime T: type) type {
         @compileError("MemoryMappedStruct does not support structs with declarations (such as functions)");
     }
 
-    var fields = [_]std.builtin.Type.StructField{.{
-        .name = "",
-        .type = T,
-        .default_value_ptr = null,
-        .is_comptime = false,
-        .alignment = 1,
-    }} ** info.@"struct".fields.len;
+    const sf = info.@"struct";
 
-    for (0..info.@"struct".fields.len) |i| {
-        fields[i] = .{
-            .alignment = 1,
-            .name = info.@"struct".fields[i].name,
-            .type = info.@"struct".fields[i].type,
-            .default_value_ptr = info.@"struct".fields[i].default_value_ptr,
-            .is_comptime = info.@"struct".fields[i].is_comptime,
+    var names: [sf.fields.len][:0]const u8 = undefined;
+    var types: [sf.fields.len]type = undefined;
+    var attrs: [sf.fields.len]std.builtin.Type.StructField.Attributes = undefined;
+
+    for (0..sf.fields.len) |i| {
+        names[i] = sf.fields[i].name;
+        types[i] = sf.fields[i].type;
+        attrs[i] = .{
+            .@"align" = 1,
+            .default_value_ptr = sf.fields[i].default_value_ptr,
+            .@"comptime" = sf.fields[i].is_comptime,
         };
     }
 
-    return @Type(.{
-        .@"struct" = .{
-            .is_tuple = info.@"struct".is_tuple,
-            .layout = .@"extern",
-            .fields = &fields,
-            .decls = &.{},
-        },
-    });
+    return @Struct(.@"extern", null, &names, &types, &attrs);
 }

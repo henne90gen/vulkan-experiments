@@ -4,6 +4,8 @@ const models = @import("models.zig");
 
 const t = std.testing;
 test "loads simple triangle model" {
+    try std.testing.expect(false);
+
     const model = try models.Model.from_memory(t.allocator,
         \\v 0.0 -0.5 0.0
         \\v 0.5 0.5 0.0

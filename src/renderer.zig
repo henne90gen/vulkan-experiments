@@ -470,7 +470,7 @@ pub const GeometryType = enum(i32) {
     TexturedQuad = 2,
 };
 
-pub const RenderHints = packed struct {
+pub const RenderHints = packed struct(u32) {
     ui_element: bool = false,
     hovered: bool = false,
     selected: bool = false,
@@ -495,7 +495,7 @@ pub const GeometryInstance = extern struct {
 
 fn createWindowSurface(instance: vk.c.VkInstance, window: *glfw.c.GLFWwindow) vk.c.VkSurfaceKHR {
     var surface: vk.c.VkSurfaceKHR = undefined;
-    if (glfw.c.glfwCreateWindowSurface(@ptrCast(instance), window, null, &surface) != vk.c.VK_SUCCESS) {
+    if (glfw.c.glfwCreateWindowSurface(@ptrCast(instance), window, null, @ptrCast(&surface)) != vk.c.VK_SUCCESS) {
         return null;
     }
     return surface;

@@ -10,10 +10,11 @@ const math = @import("math.zig");
 const cs = @import("constraint_solver.zig");
 
 test {
-    std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDecls(@This());
 }
 
 const WindowState = struct {
+    io: std.Io,
     allocator: std.mem.Allocator,
     zoom: f32,
     center: [2]f32 = .{ 0.0, 0.0 },
@@ -127,7 +128,7 @@ const ButtonImage = enum(i32) {
     Vertical = 11,
 };
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     var debug_allocator = std.heap.DebugAllocator(.{}){};
     defer {
         const result = debug_allocator.deinit();
@@ -145,6 +146,7 @@ pub fn main() !void {
     defer glfw.destroyWindow(window);
 
     var window_state = WindowState{
+        .io = init.io,
         .allocator = allocator,
         .zoom = 0.1,
     };
@@ -191,7 +193,7 @@ pub fn main() !void {
     var current_frame: u32 = 0;
     while (!glfw.windowShouldClose(window)) {
         glfw.pollEvents();
-        const start_time = std.time.nanoTimestamp();
+        const start_time = nanoTimestamp();
 
         const framebuffer_size = glfw.getFramebufferSize(window);
         const ubo = rd.UniformBufferObject{
@@ -221,7 +223,7 @@ pub fn main() !void {
 
         current_frame = (current_frame + 1) % @as(u32, @intCast(per_frame_vk_data.len));
 
-        const end_time = std.time.nanoTimestamp();
+        const end_time = nanoTimestamp();
         const frame_time_ns = end_time - start_time;
         const frame_time_ms = @as(f32, @floatFromInt(frame_time_ns)) / 1_000_000.0;
         const new_title = try std.fmt.allocPrintSentinel(allocator, "Vulkan - Frame time: {d:.2} ms - {d:.2} fps", .{ frame_time_ms, 1000.0 / frame_time_ms }, 0);
@@ -230,7 +232,8 @@ pub fn main() !void {
 
         const target_frame_time_ns: u64 = 16 * 1_000_000;
         if (frame_time_ns < target_frame_time_ns) {
-            std.Thread.sleep(@intCast(target_frame_time_ns - frame_time_ns));
+            const remaining_ns: u64 = @intCast(target_frame_time_ns - frame_time_ns);
+           try std.Io.sleep(init.io, std.Io.Duration.fromNanoseconds(remaining_ns), .real);
         }
     }
 
@@ -326,10 +329,9 @@ fn prepareSolver(window_state: *WindowState, solver: *cs.Solver) !void {
 fn saveDotFile(allocator: std.mem.Allocator, solver: *cs.Solver) !void {
     const dot_file_content = try solver.exportToDot(allocator);
     defer allocator.free(dot_file_content);
-    const file = try std.fs.cwd().createFile("constraints.dot", .{});
-
-    defer file.close();
-    try file.writeAll(dot_file_content);
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    const io = threaded.io();
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = "constraints.dot", .data = dot_file_content });
 }
 
 fn solveConstraintsClicked(_: *Button, _: *glfw.c.GLFWwindow, window_state: *WindowState) void {
@@ -346,7 +348,7 @@ fn solveConstraintsClicked(_: *Button, _: *glfw.c.GLFWwindow, window_state: *Win
         return;
     };
 
-    solver.solve() catch |err| {
+    solver.solve(window_state.io) catch |err| {
         std.debug.print("Error solving constraints: {}\n", .{err});
         return;
     };
@@ -635,7 +637,8 @@ export fn keyCallback(window: ?*glfw.c.GLFWwindow, key: i32, scancode: i32, acti
     }
 
     if (key == glfw.c.GLFW_KEY_SPACE and action == glfw.c.GLFW_PRESS) {
-        var prng = std.Random.DefaultPrng.init(@intCast(std.time.milliTimestamp()));
+        const seed = std.Io.Clock.now(.real, window_state.?.io).nanoseconds;
+        var prng = std.Random.DefaultPrng.init(@intCast(seed));
         const rand = prng.random();
         const x = (rand.float(f32) * 2.0 - 1.0) / window_state.?.zoom;
         const y = (rand.float(f32) * 2.0 - 1.0) / window_state.?.zoom;
@@ -953,4 +956,10 @@ export fn cursorPosCallback(window: ?*glfw.c.GLFWwindow, xpos: f64, ypos: f64) v
         },
         else => {},
     }
+}
+
+fn nanoTimestamp() i128 {
+    var ts: std.os.linux.timespec = undefined;
+    _ = std.os.linux.clock_gettime(.MONOTONIC, &ts);
+    return @as(i128, ts.sec) * std.time.ns_per_s + ts.nsec;
 }

@@ -81,11 +81,11 @@ pub const Solver = struct {
         }
     }
 
-    pub fn solve(self: *Solver) !void {
+    pub fn solve(self: *Solver, io: std.Io) !void {
         std.debug.print("Solving constraints\n", .{});
         std.debug.print("Nodes: {} Edges: {}\n", .{ self.nodes.items.len, self.edges.count() });
 
-        const start_time = std.time.nanoTimestamp();
+        const start_time = nanoTimestamp(io);
 
         // process anchor constraints
         var edge_itr = self.edges.iterator();
@@ -97,20 +97,19 @@ pub const Solver = struct {
                         .point => |*p| p.result = p.input,
                         .line => |*l| l.result_closest_to_origin = lineConvertToClosestToOrigin(l.input_start, l.input_end),
                     }
-                    std.debug.print("applying anchor node: {} {}\n", .{node.id, node.data});
+                    std.debug.print("applying anchor node: {} {}\n", .{ node.id, node.data });
                 },
                 else => {},
             }
         }
 
-
         var adjacency_map = try AdjacencyMap.init(self.allocator, &self.nodes, &self.edges);
         defer adjacency_map.deinit(self.allocator);
 
         var changed = true;
-        while(changed) {
+        while (changed) {
             changed = false;
-            for (self.nodes.items) | *node| {
+            for (self.nodes.items) |*node| {
                 std.debug.print("looking at node: {}\n", .{node.id});
                 const neighbors = adjacency_map.backing_map.get(node.id);
                 if (neighbors == null) {
@@ -123,10 +122,8 @@ pub const Solver = struct {
                 };
 
                 const known_neighbors: usize = 0;
-                for (neighbors.?.items)|neighbor| {
+                for (neighbors.?.items) |neighbor| {
                     std.debug.print("  neighbor: {}\n", .{neighbor.id});
-
-
                 }
 
                 if (known_neighbors < degrees_of_freedom) {
@@ -138,7 +135,7 @@ pub const Solver = struct {
             }
         }
 
-        const end_time = std.time.nanoTimestamp();
+        const end_time = nanoTimestamp(io);
         const time_ns = end_time - start_time;
         const time_ms = @as(f32, @floatFromInt(time_ns)) / 1_000_000.0;
         std.debug.print("Time taken: {d:.2}ms\n", .{time_ms});
@@ -245,4 +242,8 @@ pub fn lineConvertToClosestToOrigin(start: Point, end: Point) Point {
     _ = end;
     // TODO find point the is closest to the line given by it's start and end points
     return Point{ .x = 0.0, .y = 0.0 };
+}
+
+fn nanoTimestamp(io: std.Io) i128 {
+    return std.Io.Clock.now(.real, io).nanoseconds;
 }
